@@ -8,14 +8,16 @@
   "scripts": {
     "postinstall": "node scripts/ensure-electron.cjs",
     "probe": "node scripts/probe.ts",
+    "verify:display": "node scripts/verify-display.ts",
     "verify:health": "node scripts/verify-health.ts",
     "verify:notify": "node scripts/verify-notify.ts",
     "verify:vscode": "pnpm --filter @goldsentry/vscode build && node scripts/verify-vscode.cjs",
-    "verify:all": "pnpm verify:health && pnpm verify:notify && pnpm verify:vscode",
+    "verify:all": "pnpm verify:display && pnpm verify:health && pnpm verify:notify && pnpm verify:vscode",
     "menubar": "pnpm --filter @goldsentry/menubar start",
     "menubar:dist": "pnpm --filter @goldsentry/menubar dist",
+    "menubar:dist:win": "pnpm --filter @goldsentry/menubar dist:win",
     "vscode:build": "pnpm --filter @goldsentry/vscode build",
-    "vscode:install": "pnpm vscode:build && pnpm --filter @goldsentry/vscode install:local"
+    "vscode:install": "pnpm vscode:build && node scripts/install-vscode.cjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

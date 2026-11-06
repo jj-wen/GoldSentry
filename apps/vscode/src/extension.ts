@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { QuoteStore, feeShortText, pollOnce, sendAlertsToBark, sources, type AlertRule, type Quote } from '@goldsentry/core';
+import { QuoteStore, feeShortText, formatPct, formatPrice, pollOnce, sendAlertsToBark, sources, type AlertRule, type Quote } from '@goldsentry/core';
 
 const COOLDOWN_MINUTES = 30;
 
@@ -30,7 +30,7 @@ async function refresh(memento: vscode.Memento): Promise<void> {
   if (picked) {
     const pct = picked.dayChangePct;
     const arrow = pct === undefined || !Number.isFinite(pct) ? '' : pct >= 0 ? ' ▲' : ' ▼';
-    statusItem.text = `$(pulse) ${picked.buyPrice.toFixed(2)}${arrow}`;
+    statusItem.text = `$(pulse) ${formatPrice(picked.buyPrice)}${arrow}`;
     statusItem.tooltip = buildTooltip(result.errors);
     statusItem.show();
   } else {
@@ -65,17 +65,42 @@ function buildTooltip(errors: string[]): vscode.MarkdownString {
   md.appendMarkdown(`**积存金实时价** · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })} · ${lastMillis}ms\n\n`);
   md.appendMarkdown('| 品种 | 买入 | 卖出 | 点差 | 涨跌 | 费用 |\n|---|---:|---:|---:|---:|---:|---:|\n');
   for (const q of quotes) {
-    const pct = q.dayChangePct;
     md.appendMarkdown(
-      `| ${q.label} | ${q.buyPrice.toFixed(2)} | ${q.sellPrice.toFixed(2)} | ${q.spread.toFixed(2)} | ` +
-        `${pct === undefined || !Number.isFinite(pct) ? '—' : `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`} | ` +
+      `| ${q.label} | ${formatPrice(q.buyPrice)} | ${formatPrice(q.sellPrice)} | ${formatPrice(q.spread)} | ` +
+        `${formatPct(q.dayChangePct)} | ` +
         `${feeShortText(q.symbol)} |\n`,
     );
   }
   md.appendMarkdown('\n_费用为人工核实的公开费率，非实时；点差 0 多为上游只给单边价_\n');
+  md.appendMarkdown('_涨跌幅口径以各行 App 为准，不同银行“昨收”定义不同，勿横向比较；建行日价为 10:30 定价 + 盘中赎回价_\n');
   if (errors.length) md.appendMarkdown(`\n⚠️ ${errors.join('; ')}`);
-  md.appendMarkdown('\n\n_点击状态栏可切换显示品种_');
+  md.appendMarkdown('\n\n_点击状态栏看完整对比，选中一行即切换显示品种_');
   return md;
+}
+
+/** 左键状态栏：把 tooltip 里的表变成可操作的列表，顺带承担切换品种的入口 */
+async function showTable(): Promise<void> {
+  if (!quotes.length) {
+    void vscode.window.showWarningMessage('GoldSentry：还没有取到行情，稍等或先执行「立即刷新」');
+    return;
+  }
+  const current = symbolSetting();
+  const items = quotes.map((q) => ({
+    label: `${q.label}  ${formatPrice(q.buyPrice)}`,
+    description: `卖 ${formatPrice(q.sellPrice)} · 点差 ${formatPrice(q.spread)} · 涨跌 ${formatPct(q.dayChangePct)}`,
+    detail:
+      `${q.symbol === current ? '$(star-full) 状态栏显示中 · ' : ''}` +
+      `费用 ${feeShortText(q.symbol)} · 报价 ${new Date(q.quotedAt).toLocaleTimeString('zh-CN', { hour12: false })} · ${q.basis}`,
+    symbol: q.symbol,
+  }));
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: '全部积存金对比（涨跌幅口径以各行 App 为准；回车切换显示品种）',
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+  if (picked) {
+    await vscode.workspace.getConfiguration('goldsentry').update('symbol', picked.symbol, vscode.ConfigurationTarget.Global);
+  }
 }
 
 async function pickSymbol(): Promise<void> {
@@ -83,7 +108,7 @@ async function pickSymbol(): Promise<void> {
     void vscode.window.showWarningMessage('GoldSentry：还没有取到行情，稍等或先执行「立即刷新」');
     return;
   }
-  const items = quotes.map((q) => ({ label: q.symbol, description: q.name, detail: q.buyPrice.toFixed(2) }));
+  const items = quotes.map((q) => ({ label: q.symbol, description: q.name, detail: formatPrice(q.buyPrice) }));
   const picked = await vscode.window.showQuickPick(items, { placeHolder: '状态栏显示哪个品种' });
   if (picked) {
     await vscode.workspace.getConfiguration('goldsentry').update('symbol', picked.label, vscode.ConfigurationTarget.Global);
@@ -121,11 +146,12 @@ async function setAlert(memento: vscode.Memento): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   store = new QuoteStore(vscode.Uri.joinPath(context.globalStorageUri, 'quotes.json').fsPath);
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusItem.command = 'goldsentry.pick';
+  statusItem.command = 'goldsentry.show';
 
   context.subscriptions.push(
     statusItem,
     vscode.commands.registerCommand('goldsentry.refresh', () => refresh(context.globalState)),
+    vscode.commands.registerCommand('goldsentry.show', showTable),
     vscode.commands.registerCommand('goldsentry.pick', pickSymbol),
     vscode.commands.registerCommand('goldsentry.alert', () => setAlert(context.globalState)),
     vscode.commands.registerCommand('goldsentry.pause', () => {

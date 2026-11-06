@@ -7,6 +7,22 @@ export { pollOnce, type PollResult } from './poller.ts';
 export { assessHealth, type HealthReport, type HealthStatus } from './health.ts';
 export { feeOf, feeShortText, PRODUCT_FEES, type FeeInfo } from './fees.ts';
 export { sendBark, sendAlertsToBark, type BarkConfig, type BarkResult } from './notify.ts';
+export {
+  clampIntoWorkArea,
+  clampOpacity,
+  formatPct,
+  formatPrice,
+  OPACITY_MAX,
+  OPACITY_MIN,
+  type Rect,
+} from './format.ts';
+export {
+  detectTaskbar,
+  placeOnTaskbar,
+  TASKBAR_END_MARGIN,
+  type TaskbarEdge,
+  type TaskbarInfo,
+} from './taskbar.ts';
 
 import type { QuoteSource } from './types.ts';
 import { ccbSource } from './sources/ccb.ts';

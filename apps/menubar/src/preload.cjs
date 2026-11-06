@@ -9,5 +9,8 @@ contextBridge.exposeInMainWorld('gold', {
   setPollSeconds: (seconds) => ipcRenderer.invoke('gold:set-interval', seconds),
   saveBark: (bark) => ipcRenderer.invoke('gold:save-bark', bark),
   barkTest: () => ipcRenderer.invoke('gold:bark-test'),
+  getCapabilities: () => ipcRenderer.invoke('gold:capabilities'),
+  setBall: (patch) => ipcRenderer.invoke('gold:set-ball', patch),
+  setTaskbar: (patch) => ipcRenderer.invoke('gold:set-taskbar', patch),
   onUpdate: (callback) => ipcRenderer.on('gold:update', (_event, state) => callback(state)),
 });

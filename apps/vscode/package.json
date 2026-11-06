@@ -23,6 +23,7 @@
   "contributes": {
     "commands": [
       { "command": "goldsentry.refresh", "title": "GoldSentry: 立即刷新" },
+      { "command": "goldsentry.show", "title": "GoldSentry: 查看全部积存金对比" },
       { "command": "goldsentry.pick", "title": "GoldSentry: 选择状态栏显示的积存金" },
       { "command": "goldsentry.alert", "title": "GoldSentry: 设置到价提醒" },
       { "command": "goldsentry.pause", "title": "GoldSentry: 暂停/继续轮询" }

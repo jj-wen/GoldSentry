@@ -1,3 +1,4 @@
+import { formatPrice } from './format.ts';
 import type { Quote } from './types.ts';
 import type { QuoteStore } from './store.ts';
 
@@ -28,13 +29,13 @@ function priceOf(quote: Quote): number {
 
 function matchRule(rule: AlertRule, quote: Quote, store: QuoteStore, now: number): string | null {
   const price = priceOf(quote);
-  const stamp = `现价 ${price.toFixed(2)} · 卖出价 ${quote.sellPrice.toFixed(2)} · 点差 ${quote.spread.toFixed(2)}`;
+  const stamp = `现价 ${formatPrice(price)} · 卖出价 ${formatPrice(quote.sellPrice)} · 点差 ${formatPrice(quote.spread)}`;
 
   if (rule.above !== undefined && price >= rule.above) {
-    return `${quote.name} 涨到 ${price.toFixed(2)}|阈值 ${rule.above.toFixed(2)} · ${stamp}`;
+    return `${quote.name} 涨到 ${formatPrice(price)}|阈值 ${formatPrice(rule.above)} · ${stamp}`;
   }
   if (rule.below !== undefined && price <= rule.below) {
-    return `${quote.name} 跌到 ${price.toFixed(2)}|阈值 ${rule.below.toFixed(2)} · ${stamp}`;
+    return `${quote.name} 跌到 ${formatPrice(price)}|阈值 ${formatPrice(rule.below)} · ${stamp}`;
   }
   if (rule.absDayChangePct !== undefined) {
     // 数据源自带的相对昨收涨跌幅优先，它按银行口径算，比本地当日首笔更准
@@ -46,7 +47,7 @@ function matchRule(rule: AlertRule, quote: Quote, store: QuoteStore, now: number
     if (pct !== null && Math.abs(pct) >= rule.absDayChangePct) {
       return (
         `${quote.name} 当日${pct >= 0 ? '涨' : '跌'} ${Math.abs(pct).toFixed(2)}%` +
-        `|现价 ${price.toFixed(2)} · 触发线 ±${rule.absDayChangePct}%`
+        `|现价 ${formatPrice(price)} · 触发线 ±${rule.absDayChangePct}%`
       );
     }
   }

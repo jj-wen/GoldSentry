@@ -32,12 +32,26 @@
       <span class="warn">过快可能触发上游风控</span>
     </div>
 
+    <div class="ball-row" id="taskbar-row" hidden>
+      <label class="on"><input type="checkbox" id="taskbar-on" /> 任务栏文字</label>
+      <span class="lbl taskbar-note">显示在托盘左侧，可沿任务栏拖动</span>
+    </div>
+
+    <div class="ball-row" id="ball-row" hidden>
+      <label class="on"><input type="checkbox" id="ball-on" /> 悬浮球</label>
+      <span class="lbl">透明度</span>
+      <input id="ball-opacity" type="range" min="30" max="100" step="5" />
+      <span id="ball-opacity-val" class="val">—</span>
+    </div>
+    <p class="hint" id="ball-hint" hidden>球上单击开合本面板，拖动移位（位置会记住），滚轮直接调透明度。</p>
+
     <table id="quotes">
       <thead>
         <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>费用</th><th>更新</th></tr>
       </thead>
       <tbody></tbody>
     </table>
+    <p class="hint">涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。</p>
 
     <section class="rules">
       <div class="rules-head">

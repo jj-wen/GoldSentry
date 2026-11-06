@@ -27,6 +27,13 @@ const els = {
   barkSave: document.getElementById('bark-save'),
   barkTest: document.getElementById('bark-test'),
   barkResult: document.getElementById('bark-result'),
+  ballRow: document.getElementById('ball-row'),
+  ballHint: document.getElementById('ball-hint'),
+  ballOn: document.getElementById('ball-on'),
+  ballOpacity: document.getElementById('ball-opacity'),
+  ballVal: document.getElementById('ball-opacity-val'),
+  taskbarRow: document.getElementById('taskbar-row'),
+  taskbarOn: document.getElementById('taskbar-on'),
 };
 
 let rulesRendered = false;
@@ -102,6 +109,21 @@ function fillBark(bark) {
 
 const HEALTH_TEXT = { ok: '正常', degraded: '部分异常', offline: '全部失效' };
 
+function fillBall(ball) {
+  if (!ball) return;
+  // 球上滚轮也会改透明度，正在拖滑杆时不覆盖，避免来回打架
+  if (document.activeElement === els.ballOpacity) return;
+  els.ballOn.checked = !!ball.enabled;
+  const percent = Math.round(ball.opacity * 100);
+  els.ballOpacity.value = String(percent);
+  els.ballVal.textContent = `${percent}%`;
+}
+
+function fillTaskbar(taskbar) {
+  if (!taskbar) return;
+  els.taskbarOn.checked = !!taskbar.enabled;
+}
+
 function applyState(next) {
   state = next;
   els.stamp.textContent = next.lastPollAt
@@ -117,12 +139,28 @@ function applyState(next) {
   renderQuotes(next);
   renderRules(next.rules);
   fillBark(next.bark);
+  fillBall(next.ball);
+  fillTaskbar(next.taskbar);
   if (document.activeElement !== els.interval) els.interval.value = String(next.pollSeconds ?? 30);
 }
 
 els.interval.addEventListener('change', async () => {
   const result = await window.gold.setPollSeconds(Number(els.interval.value));
   if (!result.ok) els.interval.value = String(state?.pollSeconds ?? 30);
+});
+
+els.ballOn.addEventListener('change', async () => {
+  const saved = await window.gold.setBall({ enabled: els.ballOn.checked });
+  els.ballVal.textContent = `${Math.round(saved.opacity * 100)}%`;
+});
+
+els.taskbarOn.addEventListener('change', () => window.gold.setTaskbar({ enabled: els.taskbarOn.checked }));
+
+// 透明度要即时反馈，用 input 而不是 change
+els.ballOpacity.addEventListener('input', async () => {
+  const percent = Number(els.ballOpacity.value);
+  els.ballVal.textContent = `${percent}%`;
+  await window.gold.setBall({ opacity: percent / 100 });
 });
 
 els.barkSave.addEventListener('click', async () => {
@@ -152,6 +190,13 @@ els.save.addEventListener('click', () => window.gold.saveRules(collectRules()).t
 }));
 
 window.gold.onUpdate(applyState);
+// 悬浮球与任务栏文字都是 Windows 专属，macOS 用菜单栏本身就有的文字位
+window.gold.getCapabilities().then((caps) => {
+  if (caps.taskbar) els.taskbarRow.hidden = false;
+  if (!caps.ball) return;
+  els.ballRow.hidden = false;
+  els.ballHint.hidden = false;
+});
 window.gold.getFees().then((loaded) => {
   fees = loaded;
   if (state) renderQuotes(state);

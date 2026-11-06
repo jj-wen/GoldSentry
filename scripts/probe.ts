@@ -1,15 +1,14 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { QuoteStore, pollOnce, sources, type AlertRule } from '../packages/core/src/index.ts';
+import { formatPct, formatPrice, QuoteStore, pollOnce, sources, type AlertRule } from '../packages/core/src/index.ts';
 
 const store = new QuoteStore(join(tmpdir(), 'goldsentry-probe.json'));
 const rules: AlertRule[] = [];
 
 function show(quotes: import('../packages/core/src/index.ts').Quote[]): void {
   for (const q of quotes) {
-    const pct = q.dayChangePct === undefined ? '—' : `${q.dayChangePct >= 0 ? '+' : ''}${q.dayChangePct.toFixed(2)}%`;
     console.log(
-      `  ${q.label.padEnd(8)} ${q.symbol.padEnd(7)} 买 ${q.buyPrice.toFixed(2)}  卖 ${q.sellPrice.toFixed(2)}  点差 ${q.spread.toFixed(2)}  涨跌 ${pct.padStart(8)}  ${q.basis}`,
+      `  ${q.label.padEnd(8)} ${q.symbol.padEnd(7)} 买 ${formatPrice(q.buyPrice)}  卖 ${formatPrice(q.sellPrice)}  点差 ${formatPrice(q.spread)}  涨跌 ${formatPct(q.dayChangePct).padStart(8)}  ${q.basis}`,
     );
   }
 }
@@ -27,7 +26,7 @@ async function round(label: string): Promise<number> {
 await round('全量取数');
 
 const zs = (await sources[0].fetchQuotes()).find((q) => q.symbol === 'ZS')!;
-console.log(`\n浙商积存金当前买入价 ${zs.buyPrice.toFixed(2)}，用它构造穿越测试`);
+console.log(`\n浙商积存金当前买入价 ${formatPrice(zs.buyPrice)}，用它构造穿越测试`);
 
 rules.push({ id: 'ZS-above', symbol: 'ZS', enabled: true, above: zs.buyPrice - 5, cooldownMinutes: 0 });
 if ((await round('第 1 轮：阈值已在价格下方（预热，不该弹）')) !== 0) console.log('  !! 不该触发');

@@ -5,7 +5,9 @@ const FEED_URL = 'https://wealth.ccb.com/cn/home/news/zhgjs_new.xml';
 const VARIETIES: Record<string, { symbol: string; name: string; label: string; basis: Quote['basis'] }> = {
   '01': { symbol: 'AU9999', name: '账户黄金 Au99.99', label: '账户金', basis: 'realtime' },
   '02': { symbol: 'AU9995', name: '账户黄金 Au99.95', label: '账户金95', basis: 'realtime' },
-  // 建行把积存金当日价一并塞在账户金 feed 里，每天 10:30 定一次，页面上的 SEC_COD_MAP 不含 23 所以不展示
+  // 官方页面 getGoldStore() 注明「23 = 当日积存价」：该页读的 gjshjjc01.xml 已冻结在 2026-07-27，
+  // 而 zhgjs_new.xml 里的 23 仍每日 10:30 更新，所以从这里取。注意买入价 10:30 固定、赎回价盘中仍变，
+  // 且 Tms 固定为 10:30，spread 是混合口径，不能当对称买卖点差。
   '23': { symbol: 'JJC', name: '黄金积存（当日定价）', label: '建行日价', basis: 'dailyFix' },
 };
 

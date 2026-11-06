@@ -1,0 +1,63 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', system-ui, sans-serif;
+  user-select: none;
+  cursor: default;
+}
+
+#strip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0 10px;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: #f2f2f4;
+  /* Windows 允许"应用浅色 + 任务栏深色"组合，白字加暗描边在深浅任务栏上都能读 */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.85);
+  visibility: hidden;
+  touch-action: none;
+}
+
+body[data-ready='true'] #strip {
+  visibility: visible;
+}
+
+body[data-vertical='true'] #strip {
+  writing-mode: vertical-rl;
+  text-orientation: sideways;
+  padding: 8px 0;
+}
+
+.mark {
+  color: #ffb020;
+}
+
+.price.up,
+.arrow.up {
+  color: #ff6b6b;
+}
+
+.price.down,
+.arrow.down {
+  color: #4ade80;
+}
+
+.arrow {
+  font-size: 10px;
+}
