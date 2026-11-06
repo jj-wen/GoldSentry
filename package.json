@@ -6,6 +6,7 @@
     "node": ">=22.18"
   },
   "scripts": {
+    "postinstall": "node scripts/ensure-electron.cjs",
     "probe": "node scripts/probe.ts",
     "verify:health": "node scripts/verify-health.ts",
     "verify:notify": "node scripts/verify-notify.ts",

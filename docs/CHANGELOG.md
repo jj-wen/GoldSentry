@@ -23,6 +23,13 @@
 - **涨跌幅解析成 NaN**：`upAndDownRate` 形如 `+1.86%`，`Number()` 直接转会得到 NaN。改为剥离正负号与百分号，非法值返回 `undefined` 以走本地兜底。
 - **`settings` 与默认值共享引用**：`let settings = DEFAULT_SETTINGS` 会让后续修改污染默认值，改为浅拷贝。
 
+### 工程化
+
+- 目录整理：`probe.ts` 从 `packages/core/src/` 移到 `scripts/`，与三套 verify 脚本职责一致；根 `package.json` 增加 `engines.node`、`verify:all`、`menubar:dist`。
+- 新增交接文档：`README.md`、`AGENTS.md`、`docs/CHANGELOG.md`、`docs/ROADMAP.md`、`docs/DATA-SOURCES.md`。
+- 初始化 git 仓库并推送到 GitHub，36 个文件，已确认不含密钥与构建产物。
+- 修复新机器首跑隐患：新增 `scripts/ensure-electron.cjs` 并由根 `postinstall` 调用，避免 Electron 二进制拖到首次运行时才下载而在受限网络下失败。
+
 ### 发现（影响后续设计的结论）
 
 - **取数与推送共用同一条网络出口**：本机断网时两者一起失效，客户端无法自报"整机失联"。这是本地轮询的结构性盲区，需要独立服务端的哨兵，见 ROADMAP。

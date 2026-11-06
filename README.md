@@ -84,7 +84,7 @@ docs/                   变更记录、路线图、数据源细节
 ## 常见坑
 
 1. **改了代码忘了重新 bundle**：菜单栏的 `main` 指向 `dist/main.cjs`，必须 `npm run menubar`（或 `menubar:dist`）而不是直接 `electron .`，否则跑的是旧代码。出包后可用 `grep 关键字 release/mac-arm64/GoldSentry.app/Contents/Resources/app.asar` 校验内容。
-2. **pnpm 10 默认不跑依赖的构建脚本**：Electron 二进制靠 `package.json` 里的 `pnpm.onlyBuiltDependencies` 放行，否则运行时才去下载并失败。
+2. **pnpm 10 默认不跑依赖的构建脚本**：所以仓库根 `postinstall` 会显式补装 Electron 二进制（`scripts/ensure-electron.cjs`，走镜像下载约 100MB）。若该步骤失败，手动执行 `node scripts/ensure-electron.cjs` 重试。
 3. **国内网络**：`.npmrc` 已配 Electron 镜像；`electron-builder` 的 dmg 工具链要另设 `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`，否则会卡在 GitHub CDN。
 4. **arm64 未签名应用**：`identity: null` 出的包能启动，但系统通知可能被静默丢弃——所以推送主通道走 Bark，不依赖原生通知。
 5. **`--host-resolver-rules` 对主进程无效**：Electron 主进程的全局 `fetch` 走 Node undici，不是 Chromium 网络栈；要模拟断网请用 `NODE_USE_ENV_PROXY=1` + 死代理。

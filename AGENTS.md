@@ -38,7 +38,7 @@ npm run vscode:install
 |---|---|---|
 | 打包后界面还是旧的 | 直接调了 `electron-builder`，跳过 `build:code` | 只用 `npm run menubar:dist`，并用 `grep 关键字 .../app.asar` 校验 |
 | 启动报 `Cannot read properties of undefined` | 顶层 `state` 初始化引用了在后面声明的常量（TDZ） | 初始化用字面量，或把声明顺序调好 |
-| Electron 起不来 / 下载失败 | pnpm 10 默认不跑依赖构建脚本 | 保持 `package.json` 的 `pnpm.onlyBuiltDependencies` 含 `electron` |
+| Electron 起不来 / 下载失败 | pnpm 10 默认不跑依赖构建脚本，二进制拖到首次运行才下 | 根 `postinstall` 会调 `scripts/ensure-electron.cjs` 补装；失败就手动跑这个脚本 |
 | dmg 构建卡在 GitHub | electron-builder 工具链走 GitHub CDN | 设 `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/` |
 | 想模拟断网但无效 | `--host-resolver-rules` 只作用于 Chromium 网络栈 | 用 `NODE_USE_ENV_PROXY=1 http_proxy=http://127.0.0.1:9` |
 | 推送失败但用户不知道 | 静默失败 | 失败必须回显到面板错误条并打日志 |
