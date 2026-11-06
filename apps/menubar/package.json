@@ -1,0 +1,45 @@
+{
+  "name": "@goldsentry/menubar",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Mac 菜单栏积存金监控",
+  "author": "GoldSentry",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build:code": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/main.cjs && cp src/preload.cjs src/panel.html src/panel.css src/panel.js dist/ && rm -rf dist/assets && cp -r assets dist/assets",
+    "start": "pnpm build:code && electron .",
+    "dist": "pnpm build:code && electron-builder --mac --arm64"
+  },
+  "dependencies": {
+    "@goldsentry/core": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.10"
+  },
+  "build": {
+    "appId": "com.goldsentry.menubar",
+    "productName": "GoldSentry",
+    "directories": {
+      "buildResources": "buildResources",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.finance",
+      "target": [
+        "dmg",
+        "dir"
+      ],
+      "identity": null,
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    }
+  }
+}

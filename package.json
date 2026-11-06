@@ -1,0 +1,24 @@
+{
+  "name": "goldsentry",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "probe": "node scripts/probe.ts",
+    "verify:health": "node scripts/verify-health.ts",
+    "verify:notify": "node scripts/verify-notify.ts",
+    "verify:vscode": "pnpm --filter @goldsentry/vscode build && node scripts/verify-vscode.cjs",
+    "verify:all": "pnpm verify:health && pnpm verify:notify && pnpm verify:vscode",
+    "menubar": "pnpm --filter @goldsentry/menubar start",
+    "menubar:dist": "pnpm --filter @goldsentry/menubar dist",
+    "vscode:build": "pnpm --filter @goldsentry/vscode build",
+    "vscode:install": "pnpm vscode:build && pnpm --filter @goldsentry/vscode install:local"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
+  }
+}

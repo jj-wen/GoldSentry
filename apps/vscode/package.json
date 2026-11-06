@@ -1,0 +1,63 @@
+{
+  "name": "@goldsentry/vscode",
+  "private": true,
+  "version": "0.0.1",
+  "displayName": "GoldSentry 积存金监控",
+  "description": "在 VS Code 状态栏监控多家银行积存金实时价并做到价提醒",
+  "publisher": "goldsentry",
+  "type": "commonjs",
+  "main": "./dist/extension.cjs",
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
+    "install:local": "rm -rf ~/.vscode/extensions/goldsentry-vscode && mkdir -p ~/.vscode/extensions/goldsentry-vscode && cp -r package.json dist ~/.vscode/extensions/goldsentry-vscode/"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "goldsentry.refresh", "title": "GoldSentry: 立即刷新" },
+      { "command": "goldsentry.pick", "title": "GoldSentry: 选择状态栏显示的积存金" },
+      { "command": "goldsentry.alert", "title": "GoldSentry: 设置到价提醒" },
+      { "command": "goldsentry.pause", "title": "GoldSentry: 暂停/继续轮询" }
+    ],
+    "configuration": {
+      "title": "GoldSentry",
+      "properties": {
+        "goldsentry.intervalSeconds": {
+          "type": "number",
+          "default": 10,
+          "description": "轮询间隔（秒）"
+        },
+        "goldsentry.symbol": {
+          "type": "string",
+          "default": "ZS",
+          "enum": ["ZS", "MS", "GS", "GF", "XY", "ZX", "AU9999", "JJC"],
+          "description": "状态栏默认显示品种"
+        },
+        "goldsentry.barkKey": {
+          "type": "string",
+          "default": "",
+          "description": "Bark device key（留空则只用 VS Code 内置通知）"
+        },
+        "goldsentry.barkServer": {
+          "type": "string",
+          "default": "https://api.day.app",
+          "description": "Bark 服务器地址，自建服填自己的 https 地址"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@goldsentry/core": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  }
+}

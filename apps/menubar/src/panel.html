@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>GoldSentry</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header>
+      <span class="title">积存金监测</span>
+      <span id="health" class="health"></span>
+      <span id="stamp" class="stamp">等待首次取数</span>
+      <button id="refresh" type="button">刷新</button>
+    </header>
+
+    <div id="errors" class="errors" hidden></div>
+
+    <div class="interval-row">
+      <span class="lbl">刷新间隔</span>
+      <select id="interval">
+        <option value="1">1 秒</option>
+        <option value="2">2 秒</option>
+        <option value="3">3 秒</option>
+        <option value="5">5 秒</option>
+        <option value="8">8 秒</option>
+        <option value="10">10 秒</option>
+        <option value="30">30 秒</option>
+        <option value="60">1 分钟</option>
+        <option value="120">2 分钟</option>
+        <option value="300">5 分钟</option>
+      </select>
+      <span class="warn">过快可能触发上游风控</span>
+    </div>
+
+    <table id="quotes">
+      <thead>
+        <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>费用</th><th>更新</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <section class="rules">
+      <div class="rules-head">
+        <span>到价提醒（客户买入价）</span>
+        <button id="save" type="button">保存</button>
+      </div>
+      <div id="rule-rows"></div>
+      <p class="hint">点任意一行可切换菜单栏显示；提醒只在价格穿越阈值的那一刻触发一次。</p>
+    </section>
+
+    <section class="rules">
+      <div class="rules-head">
+        <span>Bark 推送到 iPhone</span>
+        <button id="bark-save" type="button">保存</button>
+      </div>
+      <div class="bark-row">
+        <label class="on"><input type="checkbox" id="bark-on" /> 启用</label>
+        <input id="bark-server" type="text" placeholder="https://api.day.app" spellcheck="false" />
+      </div>
+      <div class="bark-row">
+        <input id="bark-key" type="password" placeholder="device key" autocomplete="off" spellcheck="false" />
+        <button id="bark-test" type="button">测试推送</button>
+      </div>
+      <p class="hint" id="bark-result"></p>
+      <p class="hint">key 明文存在本机 userData/settings.json，不进仓库；自建 Bark 服务填自己的 https 地址。</p>
+    </section>
+
+    <script src="panel.js"></script>
+  </body>
+</html>
