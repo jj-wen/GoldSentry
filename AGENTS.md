@@ -12,8 +12,9 @@
 
 ```bash
 npm run probe        # 真实拉取全部行情（改任何取数/解析代码后必须跑）
-npm run verify:all   # 展示格式/任务栏几何 + 健康判定 + Bark 推送 + VS Code bundle 四套断言
+npm run verify:all   # 展示格式/任务栏几何 + 提醒规则 + 健康判定 + Bark 推送 + VS Code bundle 五套断言
 npm run verify:display # 只跑金额格式、透明度、任务栏贴附几何（已并入 verify:all）
+npm run verify:alerts  # 只跑提醒规则：id 约定、脏输入清理、上升沿与冷却
 npm run menubar      # 启动菜单栏（内部会先 bundle）
 npm run menubar:dist # 出 dmg
 npm run menubar:dist:win # 出 Windows portable + NSIS（NSIS 见陷阱表）
@@ -38,7 +39,7 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 7. **金额展示一律走 core 的 `formatPrice` / `formatPct`**（固定两位小数，缺失显示 `—`），不要在面板、托盘、悬浮球、任务栏文字或扩展里手写 `toFixed`。新增展示位先补 `verify:display`。
 8. **Windows 任务栏文字是覆盖窗口，不是系统内嵌**。几何只从显示器 `bounds` 与 `workArea` 的差推断（`core/taskbar.ts`）；系统任务栏窗口 Electron 读不到，别尝试依赖 `Shell_TrayWnd` 的字段或坐标。
 9. **点击语义不许分形态漂移**：左键=详情、右键=设置，托盘、悬浮球、任务栏文字一致。托盘不设 `contextMenu`（否则右键被菜单抢占），菜单项全部放在面板设置页里。VS Code 状态栏做不到左右键区分，用第二个 `$(gear)` 项承担设置入口，改动要在 README 与代码注释里说明这是平台限制。
-10. **显示什么由 core 决定，不由外壳决定**。品种名/涨/跌是否显示一律走 `settings.display` + `core/format.ts` 的 `showPct` / `normalizeDisplay`；新增展示位时不要自己判断方向，也不要把关闭的方向渲染成"平盘"。
+10. **显示什么由 core 决定，不由外壳决定**。品种名/箭头/颜色一律走 `settings.display` + `core/format.ts` 的 `priceTone`（颜色：涨红跌绿，**持平与未知都是白色**）、`showArrow`（箭头：该方向被关掉或持平就不出现）、`arrowModeOf` / `displayFromArrowMode`（面板那个"涨跌箭头"下拉框与两个布尔的互转）与 `normalizeDisplay`；新增展示位时不要自己判断方向。关掉某个方向**只隐藏箭头，不能把价格颜色也一起变白**（曾经踩过： tone 跟着开关走，关下跌后绿色价格变成白色，看着像数据挂了）。
 
 ## 已知陷阱（都是踩过的）
 
@@ -61,7 +62,14 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 | 改成 `process.exitCode` 后验证脚本挂住不退出 | 扩展/外壳自己挂了 `setInterval` 轮询，事件循环永远排不空 | 收尾先 dispose 掉注册的 disposable（`subscriptions.forEach(d => d.dispose?.())`），再设 `exitCode` |
 | 任务栏文字位置/宽度不对，或任务栏自动隐藏后文字仍悬空 | Electron 没有读取系统任务栏的 API，位置只能由 `bounds` 与 `workArea` 的差推断 | 改 `core/taskbar.ts` 先跑 `verify:display`；两者几乎相等（自动隐藏）时必须隐藏；`placeOnTaskbar` 负责夹回任务栏范围 |
 | preload 发了 IPC 但主进程毫无反应 | `ipcRenderer.send('x', a, b)` 与 `ipcMain.on('x', (_e, obj) => obj.a)` 参数形态不一致，`obj.a` 为 `undefined` 后静默早退 | 统一成单个对象参数（`send('x', { a, b })`）；IPC 入口先打一行日志确认消息真的到达 |
+| 面板改完设置后表格整块变空 | handler 返回了局部字段（如顺序数组），而渲染层写的是 `.then(applyState)`，`innerHTML=''` 之后取 `next.quotes` 抛异常 | 凡是喂给 `applyState` 的 handler 一律返回完整 `state`；新增 IPC 先确认返回值形态再写 `.then` |
+| CDP 合成指针事件点了没反应，或面板/球不响应 | 合成 `PointerEvent` 没有真实 `pointerId`，`setPointerCapture` / `releasePointerCapture` 抛错会把后面的 `click()` 一起打断 | 自动化时先把这两个方法空掉再派发；不要为此改生产代码 |
+| 窗口刚创建就发消息，界面停在默认状态 | `show: false` 的窗口 `loadFile` 是异步的，`did-finish-load` 之前 `webContents.send` 会被丢 | 用 `panelReady` / `pendingMode` 这类标记在加载完成后补发；只靠"下一次轮询"会表现成偶发错乱 |
 | 任务栏文字/悬浮球抢焦点、出现在 Alt+Tab | 普通 `BrowserWindow` 会被当成应用窗口 | `focusable:false` + `skipTaskbar:true` + `alwaysOnTop`，用 `showInactive()` 显示 |
+| 任务栏文字拖一下整块看不见（窗口还在、`innerText` 仍在更新） | Windows 上 Chromium 用 DWM 遮挡计算判断窗口可见性；`focusable:false` 的置顶透明窗口盖在任务栏上容易被判成"全被遮挡"，于是停止绘制 | 启动时 `app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')`（仅 win32）。诊断时看渲染层的 `document.visibilityState`，光看 Win32 `IsWindowVisible` 会误判成正常 |
+| 任务栏文字拖到最右就"消失"在时钟下面 | 可拖范围以前只夹到 `rect.width - width`，没减托盘安全边距 | `placeOnTaskbar` 的夹取上限同样减 `TASKBAR_END_MARGIN`；改几何先跑 `verify:display` |
+| 悬浮球放大后拖动比鼠标快 | `setZoomFactor` 放大页面后，1 个 CSS 像素 = scale 个屏幕像素，`movementX/Y` 是 CSS 像素 | `ball:move-by` 里把增量乘回 `settings.ball.scale` 再 `setPosition` |
+| 面板长按拖拽排序"没反应" | 计时未到就移动被判定成普通手势并取消了长按 | 长按计时期间不要取消，到点且仍按住就进入拖拽并用最新指针位置排一次；进入前的移动要抑制随后的 click，否则会误改主显品种 |
 | 托盘右键不触发设置，弹的是菜单 | `tray.setContextMenu()` 会抢占 right-click 事件 | 需要右键自定义行为时不要设 contextMenu，把菜单项搬进面板；`tray.on('right-click', ...)` 才会生效 |
 | 新增第二个状态栏项后 `verify:vscode` 报假失败 | 桩里 `createStatusBarItem` 每次返回同一个对象，后一项覆盖前一项的 `command` | 桩改成注册表（数组），按创建顺序分别断言；断言前要先取 `statusItems[0]` |
 

@@ -23,11 +23,11 @@
     <main id="view-detail">
       <table id="quotes">
         <thead>
-          <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>费用</th><th>更新</th></tr>
+          <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>更新</th></tr>
         </thead>
         <tbody></tbody>
       </table>
-      <p class="hint">点任意一行可切换主显品种。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。</p>
+      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序。点差列优先显示买入卖一的点差，点差为 0 时显示服务费（鼠标悬停看口径）。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。</p>
     </main>
 
     <main id="view-settings" hidden>
@@ -35,10 +35,10 @@
         <div class="rules-head"><span>显示内容</span></div>
         <div class="disp-row">
           <label><input type="checkbox" id="disp-name" /> 品种名称</label>
-          <label><input type="checkbox" id="disp-up" /> 上涨</label>
-          <label><input type="checkbox" id="disp-down" /> 下跌</label>
+          <span class="lbl">涨跌箭头</span>
+          <select id="disp-arrow"></select>
         </div>
-        <p class="hint">作用于菜单栏标题以外的悬浮球与任务栏文字；关闭某个方向后该方向的涨跌幅整条不显示。平盘按上涨口径处理（显示为 <code>+0.00%</code>）。</p>
+        <p class="hint">作用于菜单栏标题以外的悬浮球与任务栏文字：选择只决定箭头出不出现，价格颜色始终按真实涨跌（涨红跌绿，持平才是白色）。</p>
       </section>
 
       <div class="interval-row">
@@ -69,7 +69,12 @@
         <input id="ball-opacity" type="range" min="30" max="100" step="5" />
         <span id="ball-opacity-val" class="val">—</span>
       </div>
-      <p class="hint" id="ball-hint" hidden>球上左键开合详情、右键进设置，拖动移位（位置会记住），滚轮调透明度。</p>
+      <div class="ball-row" id="ball-scale-row" hidden>
+        <span class="lbl">大小</span>
+        <input id="ball-scale" type="range" min="60" max="180" step="10" />
+        <span id="ball-scale-val" class="val">—</span>
+      </div>
+      <p class="hint" id="ball-hint" hidden>球上左键开合详情、右键进设置，拖动移位（位置会记住），滚轮调透明度；大小在设置页等比例缩放。</p>
 
       <section class="rules">
         <div class="rules-head">
@@ -77,7 +82,7 @@
           <button id="save" type="button">保存</button>
         </div>
         <div id="rule-rows"></div>
-        <p class="hint">提醒只在价格穿越阈值的那一刻触发一次，停在同一侧不会重复弹。</p>
+        <p class="hint">最后一行是新增：选品种、填阈值就加一条，不用点新增按钮。提醒只在价格穿越阈值的那一刻触发一次，停在同一侧不会重复弹；同一品种同一方向只保留第一条，阈值留空的行不会被保存。</p>
       </section>
 
       <section class="rules">

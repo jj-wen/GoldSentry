@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { QuoteStore, feeShortText, formatPct, formatPrice, pollOnce, sendAlertsToBark, showPct, sources, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
+import { QuoteStore, feeShortText, formatPct, formatPrice, pollOnce, priceTone, sendAlertsToBark, showArrow, sources, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
 
 const COOLDOWN_MINUTES = 30;
 
@@ -37,7 +37,8 @@ function renderStatus(picked: Quote | undefined, errors: string[]): void {
     return;
   }
   const name = display.name ? `${picked.label} ` : '';
-  const arrow = showPct(picked.dayChangePct, display) ? (picked.dayChangePct! < 0 ? ' ▼' : ' ▲') : '';
+  // 箭头只在真实涨/跌且该方向没被关掉时出现；持平不带箭头
+  const arrow = showArrow(picked.dayChangePct, display) ? (priceTone(picked.dayChangePct) === 'down' ? ' ▼' : ' ▲') : '';
   statusItem.text = `$(pulse) ${name}${formatPrice(picked.buyPrice)}${arrow}`;
   statusItem.tooltip = buildTooltip(errors);
   statusItem.show();

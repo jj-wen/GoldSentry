@@ -2,35 +2,67 @@ import { app, BrowserWindow, Notification, Tray, ipcMain, nativeImage, powerMoni
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
+  applySymbolOrder,
+  arrowModeOf,
+  ARROW_MODE_ORDER,
+  ARROW_MODE_TEXT,
+  BALL_BASE_SIZE,
+  BALL_SCALE_MAX,
+  BALL_SCALE_MIN,
+  ballSizeFor,
+  clampBallScale,
   clampIntoWorkArea,
   clampOpacity,
+  compileRules,
   DEFAULT_DISPLAY,
   detectTaskbar,
-  feeShortText,
+  displayFromArrowMode,
   formatPct,
   formatPrice,
+  formatQuoteCells,
   normalizeDisplay,
+  normalizeSymbolOrder,
   OPACITY_MAX,
   OPACITY_MIN,
   placeOnTaskbar,
-  PRODUCT_FEES,
+  priceTone,
   QuoteStore,
   pollOnce,
+  ruleKindOf,
+  RULE_KIND_ORDER,
+  RULE_KIND_TEXT,
+  RULE_KIND_UNIT,
+  scaledSquare,
   sendAlertsToBark,
   sendBark,
-  showPct,
+  showArrow,
   sources,
+  spreadCell,
   TASKBAR_END_MARGIN,
   type AlertRule,
+  type ArrowMode,
   type BarkConfig,
   type DisplayToggles,
   type FiredAlert,
   type HealthReport,
   type Quote,
+  type QuoteCells,
+  type Rect,
+  type RuleKind,
+  type SpreadCell,
   type TaskbarInfo,
 } from '@goldsentry/core';
 
 app.name = 'GoldSentry';
+
+/**
+ * Windows 上 Chromium 会用 DWM 遮挡计算判断窗口是否可见；任务栏文字是
+ * `focusable:false` 的置顶透明窗口，盖在任务栏上时容易被判成"全被遮挡"，
+ * 于是停止绘制——窗口还在、DOM 也在更新，但文字整块看不见（拖动后尤其容易触发）。
+ */
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+}
 
 /** 面板可选的轮询间隔；1 秒档容易触发上游风控，默认仍用 30 秒 */
 const ALLOWED_INTERVALS = [1, 2, 3, 5, 8, 10, 30, 60, 120, 300];
@@ -49,6 +81,14 @@ interface State {
   primarySymbol: string;
   pollSeconds: number;
   display: DisplayToggles;
+  arrowMode: ArrowMode;
+  arrowModes: Array<{ mode: ArrowMode; text: string }>;
+  ballScale: { min: number; max: number };
+  symbolOrder: string[];
+  cells: Record<string, QuoteCells>;
+  spreadCells: Record<string, SpreadCell>;
+  ruleKinds: Array<{ kind: RuleKind; text: string; unit: string }>;
+  ruleRows: Array<{ symbol: string; kind: RuleKind; value: number | undefined; enabled: boolean }>;
   bark: Settings['bark'];
   ball: Settings['ball'];
   taskbar: Settings['taskbar'];
@@ -63,11 +103,51 @@ let state: State = {
   primarySymbol: 'ZS',
   pollSeconds: 30,
   display: { name: true, up: true, down: true },
+  arrowMode: 'both',
+  arrowModes: ARROW_MODE_ORDER.map((mode) => ({ mode, text: ARROW_MODE_TEXT[mode] })),
+  ballScale: { min: BALL_SCALE_MIN, max: BALL_SCALE_MAX },
+  symbolOrder: [],
+  cells: {},
+  spreadCells: {},
+  ruleKinds: RULE_KIND_ORDER.map((kind) => ({ kind, text: RULE_KIND_TEXT[kind], unit: RULE_KIND_UNIT[kind] })),
+  ruleRows: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
-  ball: { enabled: true, opacity: 0.9, x: null, y: null },
+  ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
   taskbar: { enabled: true, offset: null },
   health: { status: 'ok', reasons: [] },
 };
+
+/** 下拉框选项与滑杆区间都来自 core，面板不自己写死 */
+function buildUiModels(): Pick<State, 'arrowMode' | 'arrowModes' | 'ballScale'> {
+  return {
+    arrowMode: arrowModeOf(settings.display),
+    arrowModes: ARROW_MODE_ORDER.map((mode) => ({ mode, text: ARROW_MODE_TEXT[mode] })),
+    ballScale: { min: BALL_SCALE_MIN, max: BALL_SCALE_MAX },
+  };
+}
+
+/** 提醒行的下拉选项与回填值都由 core 算，面板只渲染 */
+function buildRuleModels(): Pick<State, 'ruleKinds' | 'ruleRows'> {
+  return {
+    ruleKinds: RULE_KIND_ORDER.map((kind) => ({ kind, text: RULE_KIND_TEXT[kind], unit: RULE_KIND_UNIT[kind] })),
+    ruleRows: rules.map((rule) => {
+      const kind = ruleKindOf(rule);
+      const value = kind === 'swing' ? rule.absDayChangePct : kind === 'above' ? rule.above : rule.below;
+      return { symbol: rule.symbol, kind, value, enabled: rule.enabled };
+    }),
+  };
+}
+
+/** 展示用的字符串全部在 core 里生成，面板只贴文本，不再自己算金额 */
+function buildCells(quotes: Quote[]): { cells: Record<string, QuoteCells>; spreadCells: Record<string, SpreadCell> } {
+  const cells: Record<string, QuoteCells> = {};
+  const spreadCells: Record<string, SpreadCell> = {};
+  for (const quote of quotes) {
+    cells[quote.symbol] = formatQuoteCells(quote);
+    spreadCells[quote.symbol] = spreadCell(quote.spread, quote.symbol);
+  }
+  return { cells, spreadCells };
+}
 
 function loadRules(): AlertRule[] {
   try {
@@ -93,8 +173,9 @@ interface Settings {
   primarySymbol: string;
   pollSeconds: number;
   display: DisplayToggles;
+  symbolOrder: string[];
   bark: { enabled: boolean; server: string; deviceKey: string };
-  ball: { enabled: boolean; opacity: number; x: number | null; y: number | null };
+  ball: { enabled: boolean; opacity: number; scale: number; x: number | null; y: number | null };
   taskbar: { enabled: boolean; offset: number | null };
 }
 
@@ -102,14 +183,16 @@ const DEFAULT_SETTINGS: Settings = {
   primarySymbol: 'ZS',
   pollSeconds: 30,
   display: DEFAULT_DISPLAY,
+  symbolOrder: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
-  ball: { enabled: true, opacity: 0.9, x: null, y: null },
+  ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
   taskbar: { enabled: true, offset: null },
 };
 
 let settings: Settings = {
   ...DEFAULT_SETTINGS,
   display: { ...DEFAULT_DISPLAY },
+  symbolOrder: [],
   bark: { ...DEFAULT_SETTINGS.bark },
   ball: { ...DEFAULT_SETTINGS.ball },
   taskbar: { ...DEFAULT_SETTINGS.taskbar },
@@ -126,10 +209,12 @@ function loadSettings(): Settings {
       primarySymbol: String(raw.primarySymbol ?? DEFAULT_SETTINGS.primarySymbol),
       pollSeconds: ALLOWED_INTERVALS.includes(seconds) ? seconds : DEFAULT_SETTINGS.pollSeconds,
       display: normalizeDisplay(raw.display),
+      symbolOrder: normalizeSymbolOrder(raw.symbolOrder),
       bark: { ...DEFAULT_SETTINGS.bark, ...(raw.bark ?? {}) },
       ball: {
         enabled: raw.ball?.enabled !== false,
         opacity: clampOpacity(raw.ball?.opacity, DEFAULT_SETTINGS.ball.opacity),
+        scale: clampBallScale(raw.ball?.scale, DEFAULT_SETTINGS.ball.scale),
         x: point(raw.ball?.x),
         y: point(raw.ball?.y),
       },
@@ -172,10 +257,22 @@ function applyPrimarySymbol(symbol: string): void {
 let tray: Tray | null = null;
 let panel: BrowserWindow | null = null;
 let lastTrayTitle = '';
+/** 面板刚创建时页面还没加载完，这时发 panel:mode 会被丢掉，右键首次打开会停在详情页 */
+let panelReady = false;
+let pendingMode: PanelMode | null = null;
+
+function flushPanelMode(win: BrowserWindow): void {
+  if (!panelReady) {
+    pendingMode = panelMode;
+    return;
+  }
+  win.webContents.send('panel:mode', panelMode);
+  win.webContents.send('gold:update', state);
+}
 
 function createPanel(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 420,
+    width: 440,
     height: 660,
     show: false,
     frame: false,
@@ -188,29 +285,96 @@ function createPanel(): BrowserWindow {
     },
   });
   win.loadFile(join(__dirname, 'panel.html'));
+  win.webContents.once('did-finish-load', () => {
+    panelReady = true;
+    win.webContents.send('gold:update', state);
+    if (pendingMode) {
+      win.webContents.send('panel:mode', pendingMode);
+      pendingMode = null;
+    }
+  });
   win.on('blur', () => win.hide());
+  win.on('closed', () => {
+    panelReady = false;
+    if (panel === win) panel = null;
+  });
   return win;
 }
 
-function positionPanel(): void {
-  if (!panel || !tray) return;
-  const bounds = tray.getBounds();
-  const { width, height } = panel.getBounds();
+type PanelAnchor = 'tray' | 'ball' | 'taskbar';
+
+/** 一个托盘图标不该有半条任务栏那么宽，超了说明拿到的不是图标位置 */
+const TRAY_ICON_MAX_WIDTH = 64;
+
+function iconRect(): Rect | null {
+  const bounds = tray?.getBounds();
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null;
+  if (bounds.width > TRAY_ICON_MAX_WIDTH) return null;
   const { workArea } = screen.getDisplayMatching(bounds);
-  const x = Math.round(Math.max(8, bounds.x + bounds.width / 2 - width / 2));
+  if (bounds.x + bounds.width < workArea.x || bounds.x > workArea.x + workArea.width) return null;
+  return bounds;
+}
+
+function ballRect(): Rect | null {
+  if (!ball || ball.isDestroyed() || !ball.isVisible()) return null;
+  return ball.getBounds();
+}
+
+function taskbarRect(): Rect | null {
+  if (!taskbarWin || taskbarWin.isDestroyed() || !taskbarWin.isVisible()) return null;
+  return taskbarWin.getBounds();
+}
+
+/** 面板要弹在真正点开它的那个入口旁边；入口自己拿不到位置时，退到另外两个入口 */
+function anchorRect(source: PanelAnchor): Rect | null {
+  const chain =
+    source === 'taskbar'
+      ? [taskbarRect(), ballRect(), iconRect()]
+      : source === 'ball'
+        ? [ballRect(), taskbarRect(), iconRect()]
+        : [iconRect(), taskbarRect(), ballRect()];
+  return chain.find((rect) => rect !== null) ?? null;
+}
+
+function positionPanel(source: PanelAnchor): void {
+  if (!panel) return;
+  const { width, height } = panel.getBounds();
+  const anchor = anchorRect(source);
+  if (!anchor) {
+    const { workArea } = screen.getPrimaryDisplay();
+    const pos = clampIntoWorkArea(
+      { x: workArea.x + workArea.width - width - 8, y: workArea.y + workArea.height - height - 8, width, height },
+      workArea,
+    );
+    panel.setPosition(pos.x, pos.y);
+    console.log('[panel] 没有可用锚点，退回工作区右下角');
+    return;
+  }
+  const { workArea } = screen.getDisplayMatching(anchor);
+  const rawX = Math.round(anchor.x + anchor.width / 2 - width / 2);
   // macOS 菜单栏在屏幕顶，Windows 托盘在任务栏（屏幕底），面板要往相反方向弹
-  const belowTaskbar = bounds.y > workArea.y + workArea.height / 2;
-  const y = belowTaskbar ? bounds.y - height - 6 : bounds.y + bounds.height + 6;
-  panel.setPosition(x, y);
+  const inBottomHalf = anchor.y + anchor.height / 2 > workArea.y + workArea.height / 2;
+  const rawY = Math.round(inBottomHalf ? anchor.y - height - 6 : anchor.y + anchor.height + 6);
+  const pos = clampIntoWorkArea({ x: rawX, y: rawY, width, height }, workArea);
+  panel.setPosition(pos.x, pos.y);
+  console.log(
+    `[panel] anchor=${source} rect=${Math.round(anchor.x)},${Math.round(anchor.y)} ${Math.round(anchor.width)}x${Math.round(anchor.height)} -> ${pos.x},${pos.y}`,
+  );
 }
 
 function pushState(): void {
+  const quotes = applySymbolOrder(state.quotes, settings.symbolOrder);
   state = {
     ...state,
+    quotes,
+    ...buildCells(quotes),
+    ...buildRuleModels(),
+    ...buildUiModels(),
     rules,
     primarySymbol: settings.primarySymbol,
     pollSeconds: settings.pollSeconds,
     display: settings.display,
+    symbolOrder: settings.symbolOrder,
     bark: settings.bark,
     ball: settings.ball,
     taskbar: settings.taskbar,
@@ -220,7 +384,6 @@ function pushState(): void {
   pushTaskbar();
 }
 
-const BALL_SIZE = 104;
 let ball: BrowserWindow | null = null;
 
 /** 悬浮球是 Windows 上"菜单栏文字"的替身；macOS 有真菜单栏，不做第二个入口 */
@@ -242,9 +405,10 @@ function clampBall(win: BrowserWindow): void {
 }
 
 function createBall(): BrowserWindow {
+  const size = ballSizeFor(settings.ball.scale);
   const win = new BrowserWindow({
-    width: BALL_SIZE,
-    height: BALL_SIZE,
+    width: size,
+    height: size,
     show: false,
     frame: false,
     transparent: true,
@@ -267,15 +431,18 @@ function createBall(): BrowserWindow {
       : (() => {
           const { workArea } = screen.getPrimaryDisplay();
           return {
-            x: workArea.x + workArea.width - BALL_SIZE - 24,
-            y: workArea.y + workArea.height - BALL_SIZE - 24,
+            x: workArea.x + workArea.width - size - 24,
+            y: workArea.y + workArea.height - size - 24,
           };
         })();
   win.setPosition(saved.x, saved.y);
   clampBall(win);
   win.loadFile(join(__dirname, 'ball.html'));
+  // 缩放靠 zoomFactor：字号、圆角、边框一起等比例变，不用改 CSS
+  win.webContents.setZoomFactor(settings.ball.scale);
   // 必须等首帧：早于 ready-to-show 发过去，渲染进程还没挂上监听，球会空到下一次轮询
   win.once('ready-to-show', () => {
+    win.webContents.setZoomFactor(settings.ball.scale);
     win.showInactive();
     pushBall();
   });
@@ -283,6 +450,22 @@ function createBall(): BrowserWindow {
     if (ball === win) ball = null;
   });
   return win;
+}
+
+/** 等比例缩放：窗口尺寸与 zoomFactor 一起改，且围绕球心，否则每调一档球就往右下挪 */
+function applyBallScale(value: unknown): void {
+  const next = clampBallScale(value, settings.ball.scale);
+  if (next === settings.ball.scale) return;
+  settings.ball.scale = next;
+  saveSettings();
+  if (ball && !ball.isDestroyed()) {
+    const bounds = ball.getBounds();
+    const placed = scaledSquare(bounds, ballSizeFor(next));
+    ball.setBounds({ x: placed.x, y: placed.y, width: placed.size, height: placed.size });
+    ball.webContents.setZoomFactor(next);
+    clampBall(ball);
+  }
+  pushState();
 }
 
 function setBallVisible(visible: boolean): void {
@@ -320,14 +503,13 @@ function saveBallPosition(): void {
 function readout(): { label: string; price: string; arrow: string; tone: string; mark: string } {
   const picked = primaryQuote();
   const pct = picked?.dayChangePct;
-  // 开关关掉某个方向后，该方向的涨跌幅整条不显示，而不是显示成平盘
-  const known = showPct(pct, settings.display);
-  const direction = !known ? 0 : (pct as number) < 0 ? -1 : 1;
+  // 颜色永远按真实涨跌（持平才白色）；开关只决定箭头出不出现
+  const tone = priceTone(pct);
   return {
     label: settings.display.name ? (picked?.label ?? '—') : '',
     price: picked ? formatPrice(picked.buyPrice) : '—',
-    arrow: direction > 0 ? '▲' : direction < 0 ? '▼' : '',
-    tone: direction > 0 ? 'up' : direction < 0 ? 'down' : 'flat',
+    arrow: showArrow(pct, settings.display) ? (tone === 'down' ? '▼' : '▲') : '',
+    tone,
     mark: state.health.status === 'offline' ? '×' : state.health.status === 'degraded' ? '!' : '',
   };
 }
@@ -477,14 +659,19 @@ async function dispatch(alerts: FiredAlert[]): Promise<void> {
 
 async function poll(): Promise<void> {
   const result = await pollOnce(sources, store, rules);
+  const quotes = applySymbolOrder(result.quotes, settings.symbolOrder);
   state = {
-    quotes: result.quotes,
+    quotes,
+    ...buildCells(quotes),
+    ...buildRuleModels(),
+    ...buildUiModels(),
     rules,
     errors: result.errors,
     lastPollAt: Date.now(),
     primarySymbol: settings.primarySymbol,
     pollSeconds: settings.pollSeconds,
     display: settings.display,
+    symbolOrder: settings.symbolOrder,
     bark: settings.bark,
     ball: settings.ball,
     taskbar: settings.taskbar,
@@ -539,17 +726,16 @@ type PanelMode = 'detail' | 'settings';
 let panelMode: PanelMode = 'detail';
 
 /** 所有形态统一：左键看详情，右键进设置；再次点同一侧则收起 */
-function showPanel(mode: PanelMode): void {
+function showPanel(mode: PanelMode, source: PanelAnchor = 'tray'): void {
   if (!panel) panel = createPanel();
   if (panel.isVisible() && panelMode === mode) {
     panel.hide();
     return;
   }
   panelMode = mode;
-  positionPanel();
+  positionPanel(source);
   panel.show();
-  panel.webContents.send('panel:mode', panelMode);
-  panel.webContents.send('gold:update', state);
+  flushPanelMode(panel);
 }
 
 function sendTestNotification(): void {
@@ -606,20 +792,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 ipcMain.handle('gold:state', () => state);
-ipcMain.handle('gold:fees', () =>
-  Object.fromEntries(
-    Object.entries(PRODUCT_FEES).map(([symbol, fee]) => [
-      symbol,
-      { text: feeShortText(symbol), note: fee.note, asOf: fee.asOf },
-    ]),
-  ),
-);
 ipcMain.handle('gold:refresh', () => poll());
-ipcMain.handle('gold:save-rules', (_event, next: AlertRule[]) => {
-  rules = next;
+ipcMain.handle('gold:save-rules', (_event, rows: unknown) => {
+  rules = compileRules(rows);
   saveRules();
   pushState();
-  return rules;
+  // 面板 .then(applyState)，必须拿到完整 state 才不会被局部字段打断渲染
+  return state;
 });
 ipcMain.handle('gold:set-primary', (_event, symbol: string) => {
   applyPrimarySymbol(symbol);
@@ -644,7 +823,9 @@ ipcMain.handle('gold:bark-test', () => sendBark(barkConfig(), {
   body: '收到说明 Bark 已打通',
 }));
 ipcMain.handle('gold:capabilities', () => ({ ball: supportsBall(), taskbar: supportsTaskbar() }));
-ipcMain.handle('gold:set-ball', (_event, next: { enabled?: boolean; opacity?: number }) => {
+ipcMain.handle('gold:set-ball', (_event, next: { enabled?: boolean; opacity?: number; scale?: number }) => {
+  // 先缩放再决定显隐：新建球时 createBall 要按新尺寸落位
+  if (next.scale !== undefined) applyBallScale(next.scale);
   if (typeof next.opacity === 'number') applyBallOpacity(next.opacity);
   if (typeof next.enabled === 'boolean') setBallVisible(next.enabled);
   return { ...settings.ball, supported: supportsBall() };
@@ -653,13 +834,24 @@ ipcMain.handle('gold:set-taskbar', (_event, next: { enabled?: boolean }) => {
   if (typeof next?.enabled === 'boolean') setTaskbarVisible(next.enabled);
   return { ...settings.taskbar, supported: supportsTaskbar() };
 });
-ipcMain.handle('gold:set-display', (_event, next: Partial<DisplayToggles>) => {
-  settings.display = normalizeDisplay({ ...settings.display, ...next });
+/** 面板长按拖拽出来的品种顺序；只影响面板列表，球与任务栏文字仍只看主显品种 */
+ipcMain.handle('gold:set-order', (_event, symbols: unknown) => {
+  settings.symbolOrder = normalizeSymbolOrder(symbols);
+  saveSettings();
+  pushState();
+  // 面板拿到 state 直接重渲染，返回顺序数组会把渲染打断
+  return state;
+});
+ipcMain.handle('gold:set-display', (_event, next: { name?: boolean; mode?: ArrowMode }) => {
+  const patched = { ...settings.display };
+  if (typeof next?.name === 'boolean') patched.name = next.name;
+  if (next?.mode !== undefined) Object.assign(patched, displayFromArrowMode(settings.display, next.mode));
+  settings.display = normalizeDisplay(patched);
   saveSettings();
   pushBall();
   pushTaskbar();
   pushState();
-  return settings.display;
+  return { display: settings.display, arrowMode: arrowModeOf(settings.display) };
 });
 ipcMain.on('gold:quit', () => app.quit());
 ipcMain.on('gold:notify-test', () => sendTestNotification());
@@ -667,13 +859,15 @@ ipcMain.on('gold:notify-test', () => sendTestNotification());
 // 球的拖动/滚轮走单向通道，invoke 的往返会让拖动明显发涩
 ipcMain.on('ball:move-by', (_event, dx: number, dy: number) => {
   if (!ball || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  // 页面被 zoomFactor 放大后，1 个 CSS 像素 = scale 个屏幕像素；
+  // 不换算的话球会比鼠标快（scale 1.8 时拖 100px 跑 180px）
   const [x, y] = ball.getPosition();
-  ball.setPosition(Math.round(x + dx), Math.round(y + dy));
+  ball.setPosition(Math.round(x + dx * settings.ball.scale), Math.round(y + dy * settings.ball.scale));
   clampBall(ball);
 });
 ipcMain.on('ball:drag-end', () => saveBallPosition());
-ipcMain.on('ball:click', () => showPanel('detail'));
-ipcMain.on('ball:right-click', () => showPanel('settings'));
+ipcMain.on('ball:click', () => showPanel('detail', 'ball'));
+ipcMain.on('ball:right-click', () => showPanel('settings', 'ball'));
 ipcMain.on('ball:opacity-delta', (_event, delta: number) => {
   if (!Number.isFinite(delta)) return;
   applyBallOpacity(settings.ball.opacity + delta);
@@ -691,8 +885,8 @@ ipcMain.on('taskbar:move-by', (_event, dx: number, dy: number) => {
   layoutTaskbar();
 });
 ipcMain.on('taskbar:drag-end', () => saveTaskbarOffset());
-ipcMain.on('taskbar:click', () => showPanel('detail'));
-ipcMain.on('taskbar:right-click', () => showPanel('settings'));
+ipcMain.on('taskbar:click', () => showPanel('detail', 'taskbar'));
+ipcMain.on('taskbar:right-click', () => showPanel('settings', 'taskbar'));
 ipcMain.on('taskbar:size', (_event, size: { width: number; height: number }) => {
   if (!size || !Number.isFinite(size.width) || !Number.isFinite(size.height)) return;
   const width = Math.max(1, Math.min(TASKBAR_MAX_SIZE, Math.round(size.width)));

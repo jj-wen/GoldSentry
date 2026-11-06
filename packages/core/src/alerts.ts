@@ -22,6 +22,80 @@ export interface FiredAlert {
   body: string;
 }
 
+/** 提醒方向：到价上穿、到价下穿、当日涨跌幅绝对值 */
+export type RuleKind = 'above' | 'below' | 'swing';
+
+export const RULE_KIND_ORDER: RuleKind[] = ['above', 'below', 'swing'];
+
+export const RULE_KIND_TEXT: Record<RuleKind, string> = {
+  above: '涨到 ≥',
+  below: '跌到 ≤',
+  swing: '当日 ±%',
+};
+
+export const RULE_KIND_UNIT: Record<RuleKind, string> = {
+  above: '元/克',
+  below: '元/克',
+  swing: '%',
+};
+
+/** 冷却按方向给：到价可以早点再来一次，涨跌幅波动本来就该隔久一点 */
+export const RULE_COOLDOWN_MINUTES: Record<RuleKind, number> = {
+  above: 120,
+  below: 120,
+  swing: 60,
+};
+
+/** 面板和 VS Code 用同一套 id：`品种-方向`，换方向就是另一条规则 */
+export function ruleIdOf(symbol: string, kind: RuleKind): string {
+  return `${symbol}-${kind}`;
+}
+
+/** 从已有规则反推方向，供两端回填下拉 */
+export function ruleKindOf(rule: AlertRule): RuleKind {
+  if (rule.above !== undefined) return 'above';
+  if (rule.below !== undefined) return 'below';
+  return 'swing';
+}
+
+/** 面板一行一条，字段全是 DOM 里出来的脏值 */
+export interface RuleRow {
+  symbol?: string;
+  kind?: string;
+  value?: unknown;
+  enabled?: unknown;
+}
+
+/**
+ * 把面板提交的行编译成规则：非法阈值直接丢（不写半条规则），
+ * 同品种同方向只留第一条，id 与 VS Code 那边写出来的完全一致，两端能共用同一个文件。
+ */
+export function compileRules(rows: unknown): AlertRule[] {
+  if (!Array.isArray(rows)) return [];
+  const out: AlertRule[] = [];
+  for (const raw of rows) {
+    const row = (raw ?? {}) as RuleRow;
+    const symbol = typeof row.symbol === 'string' ? row.symbol.trim() : '';
+    if (!symbol) continue;
+    const kind: RuleKind = RULE_KIND_ORDER.includes(row.kind as RuleKind) ? (row.kind as RuleKind) : 'below';
+    const value = typeof row.value === 'number' ? row.value : Number(row.value);
+    if (!Number.isFinite(value) || value <= 0) continue;
+    const id = ruleIdOf(symbol, kind);
+    if (out.some((rule) => rule.id === id)) continue;
+    const rule: AlertRule = {
+      id,
+      symbol,
+      enabled: row.enabled !== false,
+      cooldownMinutes: RULE_COOLDOWN_MINUTES[kind],
+    };
+    if (kind === 'above') rule.above = value;
+    else if (kind === 'below') rule.below = value;
+    else rule.absDayChangePct = value;
+    out.push(rule);
+  }
+  return out;
+}
+
 /** 到价一律以「你实际要付的客户买入价」为准，而不是中间价 */
 function priceOf(quote: Quote): number {
   return quote.buyPrice;

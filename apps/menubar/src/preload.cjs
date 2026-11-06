@@ -2,7 +2,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('gold', {
   getState: () => ipcRenderer.invoke('gold:state'),
-  getFees: () => ipcRenderer.invoke('gold:fees'),
   refresh: () => ipcRenderer.invoke('gold:refresh'),
   saveRules: (rules) => ipcRenderer.invoke('gold:save-rules', rules),
   setPrimary: (symbol) => ipcRenderer.invoke('gold:set-primary', symbol),
@@ -13,6 +12,7 @@ contextBridge.exposeInMainWorld('gold', {
   setBall: (patch) => ipcRenderer.invoke('gold:set-ball', patch),
   setTaskbar: (patch) => ipcRenderer.invoke('gold:set-taskbar', patch),
   setDisplay: (patch) => ipcRenderer.invoke('gold:set-display', patch),
+  setOrder: (symbols) => ipcRenderer.invoke('gold:set-order', symbols),
   quit: () => ipcRenderer.send('gold:quit'),
   notifyTest: () => ipcRenderer.send('gold:notify-test'),
   onUpdate: (callback) => ipcRenderer.on('gold:update', (_event, state) => callback(state)),

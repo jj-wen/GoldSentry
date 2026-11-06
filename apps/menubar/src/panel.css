@@ -11,7 +11,7 @@
 
 body {
   margin: 0;
-  width: 420px;
+  /* 宽度交给窗口：写死 440px 时，竖向滚动条一出现就会挤出横向滚动条并裁掉右侧 */
   font: 12px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
   color: var(--fg);
   background: var(--bg);
@@ -23,7 +23,7 @@ td.up { color: #ef5350; }
 
 td.down { color: #26a269; }
 
-td.fee { color: var(--muted); font-size: 11px; }
+td.spread { color: var(--muted); font-size: 11px; }
 
 .interval-row {
   display: flex;
@@ -87,16 +87,24 @@ button:hover { background: #343841; }
   font-size: 11px;
 }
 
-table { width: 100%; border-collapse: collapse; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 
 th, td {
-  padding: 6px 12px;
+  padding: 6px 8px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   border-bottom: 1px solid var(--line);
+  /* 品种名换行会把整列挤歪，宁可让表格按列宽算 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-th:first-child, td:first-child { text-align: left; }
+th:first-child, td:first-child { text-align: left; width: 26%; }
+
+th:nth-child(4), td:nth-child(4) { width: 15%; }
+
+th:nth-child(6), td:nth-child(6) { width: 17%; }
 
 th { color: var(--muted); font-weight: 500; font-size: 11px; }
 
@@ -107,6 +115,12 @@ td.buy { color: var(--accent); }
 tbody tr { cursor: pointer; }
 
 tbody tr:hover { background: #24272d; }
+
+/* 长按进入拖拽后行跟着指针走；没长按就是普通点击，两种手势不能互相抢 */
+tbody tr.dragging { background: #2b2f36; opacity: 0.55; }
+
+body.dragging-row,
+body.dragging-row tbody tr { cursor: grabbing; }
 
 tbody tr.primary td.name { color: var(--accent); }
 
@@ -129,10 +143,38 @@ tbody tr.primary td.name { color: var(--accent); }
   padding: 4px 0;
 }
 
-.rule-row .sym { width: 62px; }
+.rule-row .sym,
+.rule-row .kind {
+  font: inherit;
+  color: var(--fg);
+  background: #24262b;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.rule-row .sym { width: 86px; }
+
+.rule-row .kind { width: 82px; }
+
+.rule-row .del {
+  padding: 1px 8px;
+  color: #f0b8b0;
+  background: transparent;
+}
+
+/* 末尾的新增行：虚线区分，选中品种填阈值即生效 */
+.rule-row.pending {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.rule-row.pending .sym { color: var(--muted); }
 
 .rule-row input[type='number'] {
-  width: 74px;
+  flex: 1;
+  min-width: 0;
   font: inherit;
   color: var(--fg);
   background: #24262b;
@@ -140,8 +182,6 @@ tbody tr.primary td.name { color: var(--accent); }
   border-radius: 4px;
   padding: 2px 5px;
 }
-
-.rule-row .kind { color: var(--muted); }
 
 .bark-row {
   display: flex;
@@ -170,7 +210,7 @@ tbody tr.primary td.name { color: var(--accent); }
   padding: 3px 6px;
 }
 
-.hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+.hint { margin: 8px 12px 0; color: var(--muted); font-size: 11px; }
 
 .ball-row {
   display: flex;
@@ -211,7 +251,7 @@ tbody tr.primary td.name { color: var(--accent); }
 
 /* 设置页内容比详情页长得多，超出时面板内部滚动 */
 html, body { height: 100%; }
-body { overflow-y: auto; }
+body { overflow-y: auto; overflow-x: hidden; }
 
 .tabs { display: flex; gap: 4px; padding: 6px 12px 0; }
 
@@ -227,9 +267,20 @@ body { overflow-y: auto; }
 
 .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
 
-.disp-row { display: flex; gap: 14px; padding: 2px 0 4px; }
+.disp-row { display: flex; align-items: center; gap: 12px; padding: 2px 0 4px; }
 
 .disp-row label { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+
+.disp-row .lbl { color: var(--muted); }
+
+.disp-row select {
+  font: inherit;
+  color: var(--fg);
+  background: #24262b;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
 
 .foot-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 12px 12px; }
 

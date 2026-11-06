@@ -70,6 +70,7 @@ function clamp(value: number, min: number, max: number): number {
  * 把一条文字贴到任务栏上：横边填满任务栏厚度、沿 x 排；
  * 竖边填满厚度、沿 y 排。savedOffset 为沿任务栏方向记住的绝对坐标，
  * 为空时按「末端留 TASKBAR_END_MARGIN」落位。
+ * 可拖范围同样要留出这段边距，否则拖到末端会压在系统时钟/托盘下面，看着像消失了。
  */
 export function placeOnTaskbar(
   content: { width: number; height: number },
@@ -81,11 +82,15 @@ export function placeOnTaskbar(
   if (vertical) {
     const height = clamp(Math.round(content.height), 1, info.rect.height);
     const fallback = info.rect.y + info.rect.height - endMargin - height;
-    const y = Math.round(clamp(savedOffset ?? fallback, info.rect.y, info.rect.y + info.rect.height - height));
+    const y = Math.round(
+      clamp(savedOffset ?? fallback, info.rect.y, info.rect.y + info.rect.height - endMargin - height),
+    );
     return { x: info.rect.x, y, width: info.rect.width, height };
   }
   const width = clamp(Math.round(content.width), 1, info.rect.width);
   const fallback = info.rect.x + info.rect.width - endMargin - width;
-  const x = Math.round(clamp(savedOffset ?? fallback, info.rect.x, info.rect.x + info.rect.width - width));
+  const x = Math.round(
+    clamp(savedOffset ?? fallback, info.rect.x, info.rect.x + info.rect.width - endMargin - width),
+  );
   return { x, y: info.rect.y, width, height: info.rect.height };
 }
