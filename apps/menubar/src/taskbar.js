@@ -61,10 +61,18 @@ strip.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
   strip.releasePointerCapture(event.pointerId);
-  if (travelled < 5) window.taskbar.click();
-  else window.taskbar.dragEnd();
+  if (travelled >= 5) window.taskbar.dragEnd();
+  // 右键进设置，左键开详情，与托盘保持一致
+  else if (event.button === 2) window.taskbar.rightClick();
+  else window.taskbar.click();
 });
 
 strip.addEventListener('pointercancel', () => {
   dragging = false;
+});
+
+strip.addEventListener('contextmenu', (event) => event.preventDefault());
+
+strip.addEventListener('pointerdown', (event) => {
+  if (event.button === 2) event.preventDefault();
 });

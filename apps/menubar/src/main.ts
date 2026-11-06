@@ -1,13 +1,15 @@
-import { app, BrowserWindow, Menu, Notification, Tray, ipcMain, nativeImage, powerMonitor, screen } from 'electron';
+import { app, BrowserWindow, Notification, Tray, ipcMain, nativeImage, powerMonitor, screen } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
   clampIntoWorkArea,
   clampOpacity,
+  DEFAULT_DISPLAY,
   detectTaskbar,
   feeShortText,
   formatPct,
   formatPrice,
+  normalizeDisplay,
   OPACITY_MAX,
   OPACITY_MIN,
   placeOnTaskbar,
@@ -16,10 +18,12 @@ import {
   pollOnce,
   sendAlertsToBark,
   sendBark,
+  showPct,
   sources,
   TASKBAR_END_MARGIN,
   type AlertRule,
   type BarkConfig,
+  type DisplayToggles,
   type FiredAlert,
   type HealthReport,
   type Quote,
@@ -44,6 +48,7 @@ interface State {
   lastPollAt: number;
   primarySymbol: string;
   pollSeconds: number;
+  display: DisplayToggles;
   bark: Settings['bark'];
   ball: Settings['ball'];
   taskbar: Settings['taskbar'];
@@ -57,6 +62,7 @@ let state: State = {
   lastPollAt: 0,
   primarySymbol: 'ZS',
   pollSeconds: 30,
+  display: { name: true, up: true, down: true },
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
   ball: { enabled: true, opacity: 0.9, x: null, y: null },
   taskbar: { enabled: true, offset: null },
@@ -86,6 +92,7 @@ function saveRules(): void {
 interface Settings {
   primarySymbol: string;
   pollSeconds: number;
+  display: DisplayToggles;
   bark: { enabled: boolean; server: string; deviceKey: string };
   ball: { enabled: boolean; opacity: number; x: number | null; y: number | null };
   taskbar: { enabled: boolean; offset: number | null };
@@ -94,6 +101,7 @@ interface Settings {
 const DEFAULT_SETTINGS: Settings = {
   primarySymbol: 'ZS',
   pollSeconds: 30,
+  display: DEFAULT_DISPLAY,
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
   ball: { enabled: true, opacity: 0.9, x: null, y: null },
   taskbar: { enabled: true, offset: null },
@@ -101,6 +109,7 @@ const DEFAULT_SETTINGS: Settings = {
 
 let settings: Settings = {
   ...DEFAULT_SETTINGS,
+  display: { ...DEFAULT_DISPLAY },
   bark: { ...DEFAULT_SETTINGS.bark },
   ball: { ...DEFAULT_SETTINGS.ball },
   taskbar: { ...DEFAULT_SETTINGS.taskbar },
@@ -116,6 +125,7 @@ function loadSettings(): Settings {
     return {
       primarySymbol: String(raw.primarySymbol ?? DEFAULT_SETTINGS.primarySymbol),
       pollSeconds: ALLOWED_INTERVALS.includes(seconds) ? seconds : DEFAULT_SETTINGS.pollSeconds,
+      display: normalizeDisplay(raw.display),
       bark: { ...DEFAULT_SETTINGS.bark, ...(raw.bark ?? {}) },
       ball: {
         enabled: raw.ball?.enabled !== false,
@@ -131,6 +141,7 @@ function loadSettings(): Settings {
   } catch {
     return {
       ...DEFAULT_SETTINGS,
+      display: { ...DEFAULT_DISPLAY },
       bark: { ...DEFAULT_SETTINGS.bark },
       ball: { ...DEFAULT_SETTINGS.ball },
       taskbar: { ...DEFAULT_SETTINGS.taskbar },
@@ -199,6 +210,7 @@ function pushState(): void {
     rules,
     primarySymbol: settings.primarySymbol,
     pollSeconds: settings.pollSeconds,
+    display: settings.display,
     bark: settings.bark,
     ball: settings.ball,
     taskbar: settings.taskbar,
@@ -285,7 +297,7 @@ function setBallVisible(visible: boolean): void {
   }
   settings.ball.enabled = visible;
   saveSettings();
-  refreshTrayMenu();
+  pushState();
 }
 
 function applyBallOpacity(value: unknown): void {
@@ -304,14 +316,15 @@ function saveBallPosition(): void {
   saveSettings();
 }
 
-/** 悬浮球与任务栏文字共用同一条"瞟一眼"数据：品种短名 + 两位小数价格 + 涨跌箭头 */
+/** 悬浮球与任务栏文字共用同一条"瞟一眼"数据；显示哪些片段由 settings.display 决定 */
 function readout(): { label: string; price: string; arrow: string; tone: string; mark: string } {
   const picked = primaryQuote();
   const pct = picked?.dayChangePct;
-  const known = pct !== undefined && Number.isFinite(pct);
-  const direction = !known ? 0 : (pct as number) > 0 ? 1 : (pct as number) < 0 ? -1 : 0;
+  // 开关关掉某个方向后，该方向的涨跌幅整条不显示，而不是显示成平盘
+  const known = showPct(pct, settings.display);
+  const direction = !known ? 0 : (pct as number) < 0 ? -1 : 1;
   return {
-    label: picked?.label ?? '—',
+    label: settings.display.name ? (picked?.label ?? '—') : '',
     price: picked ? formatPrice(picked.buyPrice) : '—',
     arrow: direction > 0 ? '▲' : direction < 0 ? '▼' : '',
     tone: direction > 0 ? 'up' : direction < 0 ? 'down' : 'flat',
@@ -431,7 +444,6 @@ function setTaskbarVisible(visible: boolean): void {
     taskbarWin?.hide();
   }
   pushState();
-  refreshTrayMenu();
 }
 
 function saveTaskbarOffset(): void {
@@ -472,6 +484,7 @@ async function poll(): Promise<void> {
     lastPollAt: Date.now(),
     primarySymbol: settings.primarySymbol,
     pollSeconds: settings.pollSeconds,
+    display: settings.display,
     bark: settings.bark,
     ball: settings.ball,
     taskbar: settings.taskbar,
@@ -522,14 +535,20 @@ function updateTrayTitle(): void {
   if (changed) console.log(`[tray] title="${title}" ${Notification.isSupported() ? '通知可用' : '通知不可用'}`);
 }
 
-function togglePanel(): void {
+type PanelMode = 'detail' | 'settings';
+let panelMode: PanelMode = 'detail';
+
+/** 所有形态统一：左键看详情，右键进设置；再次点同一侧则收起 */
+function showPanel(mode: PanelMode): void {
   if (!panel) panel = createPanel();
-  if (panel.isVisible()) {
+  if (panel.isVisible() && panelMode === mode) {
     panel.hide();
     return;
   }
+  panelMode = mode;
   positionPanel();
   panel.show();
+  panel.webContents.send('panel:mode', panelMode);
   panel.webContents.send('gold:update', state);
 }
 
@@ -538,45 +557,6 @@ function sendTestNotification(): void {
     title: 'GoldSentry 通知测试',
     body: '看到这条说明提醒链路是通的',
   }).show();
-}
-
-function buildTrayMenu(): Menu {
-  return Menu.buildFromTemplate([
-    { label: '刷新行情', click: () => void poll() },
-    { label: '测试通知', click: sendTestNotification },
-    ...(supportsBall() || supportsTaskbar()
-      ? [
-          { type: 'separator' as const },
-          ...(supportsTaskbar()
-            ? [
-                {
-                  label: '任务栏显示',
-                  type: 'checkbox' as const,
-                  checked: settings.taskbar.enabled,
-                  click: (item: { checked: boolean }) => setTaskbarVisible(item.checked),
-                },
-              ]
-            : []),
-          ...(supportsBall()
-            ? [
-                {
-                  label: '显示悬浮球',
-                  type: 'checkbox' as const,
-                  checked: settings.ball.enabled,
-                  click: (item: { checked: boolean }) => setBallVisible(item.checked),
-                },
-              ]
-            : []),
-        ]
-      : []),
-    { type: 'separator' },
-    { label: '退出 GoldSentry', role: 'quit' },
-  ]);
-}
-
-/** 面板里的开关也会改这两项，菜单要在每次变化后重建，勾选状态才不会过期 */
-function refreshTrayMenu(): void {
-  tray?.setContextMenu(buildTrayMenu());
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -604,8 +584,8 @@ if (!app.requestSingleInstanceLock()) {
             .createFromPath(join(__dirname, 'assets', 'icon.png'))
             .resize({ width: 16, height: 16 });
     tray = new Tray(icon);
-    tray.on('click', togglePanel);
-    tray.setContextMenu(buildTrayMenu());
+    tray.on('click', () => showPanel('detail'));
+    tray.on('right-click', () => showPanel('settings'));
 
     // 拔显示器 / 改分辨率后球可能整个跑到屏幕外，任务栏贴附也要重排
     const relayout = () => {
@@ -673,6 +653,16 @@ ipcMain.handle('gold:set-taskbar', (_event, next: { enabled?: boolean }) => {
   if (typeof next?.enabled === 'boolean') setTaskbarVisible(next.enabled);
   return { ...settings.taskbar, supported: supportsTaskbar() };
 });
+ipcMain.handle('gold:set-display', (_event, next: Partial<DisplayToggles>) => {
+  settings.display = normalizeDisplay({ ...settings.display, ...next });
+  saveSettings();
+  pushBall();
+  pushTaskbar();
+  pushState();
+  return settings.display;
+});
+ipcMain.on('gold:quit', () => app.quit());
+ipcMain.on('gold:notify-test', () => sendTestNotification());
 
 // 球的拖动/滚轮走单向通道，invoke 的往返会让拖动明显发涩
 ipcMain.on('ball:move-by', (_event, dx: number, dy: number) => {
@@ -682,7 +672,8 @@ ipcMain.on('ball:move-by', (_event, dx: number, dy: number) => {
   clampBall(ball);
 });
 ipcMain.on('ball:drag-end', () => saveBallPosition());
-ipcMain.on('ball:click', () => togglePanel());
+ipcMain.on('ball:click', () => showPanel('detail'));
+ipcMain.on('ball:right-click', () => showPanel('settings'));
 ipcMain.on('ball:opacity-delta', (_event, delta: number) => {
   if (!Number.isFinite(delta)) return;
   applyBallOpacity(settings.ball.opacity + delta);
@@ -700,7 +691,8 @@ ipcMain.on('taskbar:move-by', (_event, dx: number, dy: number) => {
   layoutTaskbar();
 });
 ipcMain.on('taskbar:drag-end', () => saveTaskbarOffset());
-ipcMain.on('taskbar:click', () => togglePanel());
+ipcMain.on('taskbar:click', () => showPanel('detail'));
+ipcMain.on('taskbar:right-click', () => showPanel('settings'));
 ipcMain.on('taskbar:size', (_event, size: { width: number; height: number }) => {
   if (!size || !Number.isFinite(size.width) || !Number.isFinite(size.height)) return;
   const width = Math.max(1, Math.min(TASKBAR_MAX_SIZE, Math.round(size.width)));

@@ -37,6 +37,8 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 6. **费率不是实时数据**。`fees.ts` 每条都带 `asOf`，改值必须更新日期并说明出处；查不到就显示 `—`，不要编。
 7. **金额展示一律走 core 的 `formatPrice` / `formatPct`**（固定两位小数，缺失显示 `—`），不要在面板、托盘、悬浮球、任务栏文字或扩展里手写 `toFixed`。新增展示位先补 `verify:display`。
 8. **Windows 任务栏文字是覆盖窗口，不是系统内嵌**。几何只从显示器 `bounds` 与 `workArea` 的差推断（`core/taskbar.ts`）；系统任务栏窗口 Electron 读不到，别尝试依赖 `Shell_TrayWnd` 的字段或坐标。
+9. **点击语义不许分形态漂移**：左键=详情、右键=设置，托盘、悬浮球、任务栏文字一致。托盘不设 `contextMenu`（否则右键被菜单抢占），菜单项全部放在面板设置页里。VS Code 状态栏做不到左右键区分，用第二个 `$(gear)` 项承担设置入口，改动要在 README 与代码注释里说明这是平台限制。
+10. **显示什么由 core 决定，不由外壳决定**。品种名/涨/跌是否显示一律走 `settings.display` + `core/format.ts` 的 `showPct` / `normalizeDisplay`；新增展示位时不要自己判断方向，也不要把关闭的方向渲染成"平盘"。
 
 ## 已知陷阱（都是踩过的）
 
@@ -60,6 +62,8 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 | 任务栏文字位置/宽度不对，或任务栏自动隐藏后文字仍悬空 | Electron 没有读取系统任务栏的 API，位置只能由 `bounds` 与 `workArea` 的差推断 | 改 `core/taskbar.ts` 先跑 `verify:display`；两者几乎相等（自动隐藏）时必须隐藏；`placeOnTaskbar` 负责夹回任务栏范围 |
 | preload 发了 IPC 但主进程毫无反应 | `ipcRenderer.send('x', a, b)` 与 `ipcMain.on('x', (_e, obj) => obj.a)` 参数形态不一致，`obj.a` 为 `undefined` 后静默早退 | 统一成单个对象参数（`send('x', { a, b })`）；IPC 入口先打一行日志确认消息真的到达 |
 | 任务栏文字/悬浮球抢焦点、出现在 Alt+Tab | 普通 `BrowserWindow` 会被当成应用窗口 | `focusable:false` + `skipTaskbar:true` + `alwaysOnTop`，用 `showInactive()` 显示 |
+| 托盘右键不触发设置，弹的是菜单 | `tray.setContextMenu()` 会抢占 right-click 事件 | 需要右键自定义行为时不要设 contextMenu，把菜单项搬进面板；`tray.on('right-click', ...)` 才会生效 |
+| 新增第二个状态栏项后 `verify:vscode` 报假失败 | 桩里 `createStatusBarItem` 每次返回同一个对象，后一项覆盖前一项的 `command` | 桩改成注册表（数组），按创建顺序分别断言；断言前要先取 `statusItems[0]` |
 
 ## 新增一家银行/一个数据源
 

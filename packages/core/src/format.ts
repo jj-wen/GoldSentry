@@ -27,6 +27,33 @@ export interface Rect {
   height: number;
 }
 
+/** 展示内容开关：三个形态共用，避免各端自己决定显示什么 */
+export interface DisplayToggles {
+  name: boolean;
+  up: boolean;
+  down: boolean;
+}
+
+export const DEFAULT_DISPLAY: DisplayToggles = { name: true, up: true, down: true };
+
+export function normalizeDisplay(raw: unknown): DisplayToggles {
+  const input = (raw ?? {}) as Partial<DisplayToggles>;
+  return {
+    name: typeof input.name === 'boolean' ? input.name : DEFAULT_DISPLAY.name,
+    up: typeof input.up === 'boolean' ? input.up : DEFAULT_DISPLAY.up,
+    down: typeof input.down === 'boolean' ? input.down : DEFAULT_DISPLAY.down,
+  };
+}
+
+/**
+ * 涨跌要不要显示。平盘（0）归到"涨"这一侧，因为 formatPct(0) 输出的是 `+0.00%`，
+ * 显示形态与上涨一致。
+ */
+export function showPct(pct: number | undefined, display: DisplayToggles): boolean {
+  if (typeof pct !== 'number' || !Number.isFinite(pct)) return false;
+  return pct < 0 ? display.down : display.up;
+}
+
 /**
  * 记住的球位置在换分辨率或拔显示器后会落在屏幕外，
  * 这里夹回工作区；夹不动（球比工作区还大）时贴左上角，保证找得到。

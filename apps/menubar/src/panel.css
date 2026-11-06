@@ -208,3 +208,29 @@ tbody tr.primary td.name { color: var(--accent); }
   font-size: 10px;
   color: #7d7f86;
 }
+
+/* 设置页内容比详情页长得多，超出时面板内部滚动 */
+html, body { height: 100%; }
+body { overflow-y: auto; }
+
+.tabs { display: flex; gap: 4px; padding: 6px 12px 0; }
+
+.tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 4px 0 6px;
+  color: var(--muted);
+}
+
+.tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+
+.disp-row { display: flex; gap: 14px; padding: 2px 0 4px; }
+
+.disp-row label { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+
+.foot-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 12px 12px; }
+
+button.danger { color: #f0b8b0; }

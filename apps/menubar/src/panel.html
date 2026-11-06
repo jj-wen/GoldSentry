@@ -13,71 +13,96 @@
       <button id="refresh" type="button">刷新</button>
     </header>
 
+    <nav class="tabs">
+      <button id="tab-detail" class="tab" type="button">详情</button>
+      <button id="tab-settings" class="tab" type="button">设置</button>
+    </nav>
+
     <div id="errors" class="errors" hidden></div>
 
-    <div class="interval-row">
-      <span class="lbl">刷新间隔</span>
-      <select id="interval">
-        <option value="1">1 秒</option>
-        <option value="2">2 秒</option>
-        <option value="3">3 秒</option>
-        <option value="5">5 秒</option>
-        <option value="8">8 秒</option>
-        <option value="10">10 秒</option>
-        <option value="30">30 秒</option>
-        <option value="60">1 分钟</option>
-        <option value="120">2 分钟</option>
-        <option value="300">5 分钟</option>
-      </select>
-      <span class="warn">过快可能触发上游风控</span>
-    </div>
+    <main id="view-detail">
+      <table id="quotes">
+        <thead>
+          <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>费用</th><th>更新</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p class="hint">点任意一行可切换主显品种。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。</p>
+    </main>
 
-    <div class="ball-row" id="taskbar-row" hidden>
-      <label class="on"><input type="checkbox" id="taskbar-on" /> 任务栏文字</label>
-      <span class="lbl taskbar-note">显示在托盘左侧，可沿任务栏拖动</span>
-    </div>
+    <main id="view-settings" hidden>
+      <section class="rules">
+        <div class="rules-head"><span>显示内容</span></div>
+        <div class="disp-row">
+          <label><input type="checkbox" id="disp-name" /> 品种名称</label>
+          <label><input type="checkbox" id="disp-up" /> 上涨</label>
+          <label><input type="checkbox" id="disp-down" /> 下跌</label>
+        </div>
+        <p class="hint">作用于菜单栏标题以外的悬浮球与任务栏文字；关闭某个方向后该方向的涨跌幅整条不显示。平盘按上涨口径处理（显示为 <code>+0.00%</code>）。</p>
+      </section>
 
-    <div class="ball-row" id="ball-row" hidden>
-      <label class="on"><input type="checkbox" id="ball-on" /> 悬浮球</label>
-      <span class="lbl">透明度</span>
-      <input id="ball-opacity" type="range" min="30" max="100" step="5" />
-      <span id="ball-opacity-val" class="val">—</span>
-    </div>
-    <p class="hint" id="ball-hint" hidden>球上单击开合本面板，拖动移位（位置会记住），滚轮直接调透明度。</p>
-
-    <table id="quotes">
-      <thead>
-        <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>费用</th><th>更新</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-    <p class="hint">涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。</p>
-
-    <section class="rules">
-      <div class="rules-head">
-        <span>到价提醒（客户买入价）</span>
-        <button id="save" type="button">保存</button>
+      <div class="interval-row">
+        <span class="lbl">刷新间隔</span>
+        <select id="interval">
+          <option value="1">1 秒</option>
+          <option value="2">2 秒</option>
+          <option value="3">3 秒</option>
+          <option value="5">5 秒</option>
+          <option value="8">8 秒</option>
+          <option value="10">10 秒</option>
+          <option value="30">30 秒</option>
+          <option value="60">1 分钟</option>
+          <option value="120">2 分钟</option>
+          <option value="300">5 分钟</option>
+        </select>
+        <span class="warn">过快可能触发上游风控</span>
       </div>
-      <div id="rule-rows"></div>
-      <p class="hint">点任意一行可切换菜单栏显示；提醒只在价格穿越阈值的那一刻触发一次。</p>
-    </section>
 
-    <section class="rules">
-      <div class="rules-head">
-        <span>Bark 推送到 iPhone</span>
-        <button id="bark-save" type="button">保存</button>
+      <div class="ball-row" id="taskbar-row" hidden>
+        <label class="on"><input type="checkbox" id="taskbar-on" /> 任务栏文字</label>
+        <span class="lbl taskbar-note">显示在托盘左侧，可沿任务栏拖动</span>
       </div>
-      <div class="bark-row">
-        <label class="on"><input type="checkbox" id="bark-on" /> 启用</label>
-        <input id="bark-server" type="text" placeholder="https://api.day.app" spellcheck="false" />
+
+      <div class="ball-row" id="ball-row" hidden>
+        <label class="on"><input type="checkbox" id="ball-on" /> 悬浮球</label>
+        <span class="lbl">透明度</span>
+        <input id="ball-opacity" type="range" min="30" max="100" step="5" />
+        <span id="ball-opacity-val" class="val">—</span>
       </div>
-      <div class="bark-row">
-        <input id="bark-key" type="password" placeholder="device key" autocomplete="off" spellcheck="false" />
-        <button id="bark-test" type="button">测试推送</button>
+      <p class="hint" id="ball-hint" hidden>球上左键开合详情、右键进设置，拖动移位（位置会记住），滚轮调透明度。</p>
+
+      <section class="rules">
+        <div class="rules-head">
+          <span>到价提醒（客户买入价）</span>
+          <button id="save" type="button">保存</button>
+        </div>
+        <div id="rule-rows"></div>
+        <p class="hint">提醒只在价格穿越阈值的那一刻触发一次，停在同一侧不会重复弹。</p>
+      </section>
+
+      <section class="rules">
+        <div class="rules-head">
+          <span>Bark 推送到 iPhone</span>
+          <button id="bark-save" type="button">保存</button>
+        </div>
+        <div class="bark-row">
+          <label class="on"><input type="checkbox" id="bark-on" /> 启用</label>
+          <input id="bark-server" type="text" placeholder="https://api.day.app" spellcheck="false" />
+        </div>
+        <div class="bark-row">
+          <input id="bark-key" type="password" placeholder="device key" autocomplete="off" spellcheck="false" />
+          <button id="bark-test" type="button">测试推送</button>
+        </div>
+        <p class="hint" id="bark-result"></p>
+        <p class="hint">key 明文存在本机 userData/settings.json，不进仓库；自建 Bark 服务填自己的 https 地址。</p>
+      </section>
+
+      <div class="foot-row">
+        <button id="notify-test" type="button">测试系统通知</button>
+        <button id="quit" class="danger" type="button">退出 GoldSentry</button>
       </div>
-      <p class="hint" id="bark-result"></p>
-      <p class="hint">key 明文存在本机 userData/settings.json，不进仓库；自建 Bark 服务填自己的 https 地址。</p>
-    </section>
+      <p class="hint">左键=详情，右键=设置。原托盘右键菜单已并入本页。</p>
+    </main>
 
     <script src="panel.js"></script>
   </body>

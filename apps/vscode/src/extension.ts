@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
-import { QuoteStore, feeShortText, formatPct, formatPrice, pollOnce, sendAlertsToBark, sources, type AlertRule, type Quote } from '@goldsentry/core';
+import { QuoteStore, feeShortText, formatPct, formatPrice, pollOnce, sendAlertsToBark, showPct, sources, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
 
 const COOLDOWN_MINUTES = 30;
 
 let store: QuoteStore;
 let statusItem: vscode.StatusBarItem;
+let gearItem: vscode.StatusBarItem;
 let timer: NodeJS.Timeout | undefined;
 let quotes: Quote[] = [];
 let lastMillis = 0;
@@ -18,6 +19,30 @@ function symbolSetting(): string {
   return vscode.workspace.getConfiguration('goldsentry').get<string>('symbol', 'ZS');
 }
 
+function displaySetting(): DisplayToggles {
+  const config = vscode.workspace.getConfiguration('goldsentry');
+  return {
+    name: config.get<boolean>('showName', true),
+    up: config.get<boolean>('showUp', true),
+    down: config.get<boolean>('showDown', true),
+  };
+}
+
+function renderStatus(picked: Quote | undefined, errors: string[]): void {
+  const display = displaySetting();
+  if (!picked) {
+    statusItem.text = '$(pulse) --';
+    statusItem.tooltip = `取数失败：${errors.join('; ')}`;
+    statusItem.show();
+    return;
+  }
+  const name = display.name ? `${picked.label} ` : '';
+  const arrow = showPct(picked.dayChangePct, display) ? (picked.dayChangePct! < 0 ? ' ▼' : ' ▲') : '';
+  statusItem.text = `$(pulse) ${name}${formatPrice(picked.buyPrice)}${arrow}`;
+  statusItem.tooltip = buildTooltip(errors);
+  statusItem.show();
+}
+
 async function refresh(memento: vscode.Memento): Promise<void> {
   if (!store) return;
   const t0 = Date.now();
@@ -26,18 +51,7 @@ async function refresh(memento: vscode.Memento): Promise<void> {
   lastMillis = Date.now() - t0;
   quotes = result.quotes;
 
-  const picked = quotes.find((q) => q.symbol === symbolSetting()) ?? quotes[0];
-  if (picked) {
-    const pct = picked.dayChangePct;
-    const arrow = pct === undefined || !Number.isFinite(pct) ? '' : pct >= 0 ? ' ▲' : ' ▼';
-    statusItem.text = `$(pulse) ${formatPrice(picked.buyPrice)}${arrow}`;
-    statusItem.tooltip = buildTooltip(result.errors);
-    statusItem.show();
-  } else {
-    statusItem.text = '$(pulse) --';
-    statusItem.tooltip = `取数失败：${result.errors.join('; ')}`;
-    statusItem.show();
-  }
+  renderStatus(quotes.find((q) => q.symbol === symbolSetting()) ?? quotes[0], result.errors);
 
   for (const alert of result.alerts) {
     void vscode.window.showInformationMessage(`${alert.title}｜${alert.body}`, '查看行情').then((pick) => {
@@ -143,13 +157,91 @@ async function setAlert(memento: vscode.Memento): Promise<void> {
   void vscode.window.setStatusBarMessage(`GoldSentry：已设 ${picked.label} ${direction.value} ${raw}`, 4000);
 }
 
+function restartTimer(memento: vscode.Memento): void {
+  if (timer) clearInterval(timer);
+  const seconds = Math.max(1, vscode.workspace.getConfiguration('goldsentry').get<number>('intervalSeconds', 10));
+  timer = setInterval(() => {
+    if (!paused) void refresh(memento);
+  }, seconds * 1000);
+}
+
+/** 状态栏项点不到右键，所以设置走旁边那个 ⚙ 项 */
+async function openSettings(memento: vscode.Memento): Promise<void> {
+  const config = vscode.workspace.getConfiguration('goldsentry');
+  const display = displaySetting();
+  const items = [
+    { label: '显示品种名称', detail: display.name ? '开' : '关', key: 'showName' },
+    { label: '显示上涨（红）', detail: display.up ? '开' : '关', key: 'showUp' },
+    { label: '显示下跌（绿）', detail: display.down ? '开' : '关', key: 'showDown' },
+    { label: '刷新间隔', detail: `${config.get<number>('intervalSeconds', 10)} 秒`, key: 'interval' },
+    { label: '主显品种', detail: symbolSetting(), key: 'symbol' },
+    { label: '到价提醒', detail: `${rulesFromMemento(memento).length} 条`, key: 'alert' },
+    { label: 'Bark device key', detail: config.get<string>('barkKey', '') ? '已配置' : '未配置', key: 'bark' },
+    { label: paused ? '继续轮询' : '暂停轮询', detail: paused ? '已暂停' : '进行中', key: 'pause' },
+  ] as const;
+
+  const picked = await vscode.window.showQuickPick(
+    items.map((item) => ({ ...item, description: item.detail })),
+    { placeHolder: 'GoldSentry 设置' },
+  );
+  if (!picked) return;
+
+  switch (picked.key) {
+    case 'showName':
+    case 'showUp':
+    case 'showDown': {
+      await config.update(picked.key, !config.get<boolean>(picked.key, true), vscode.ConfigurationTarget.Global);
+      renderStatus(quotes.find((q) => q.symbol === symbolSetting()) ?? quotes[0], []);
+      break;
+    }
+    case 'interval': {
+      const raw = await vscode.window.showInputBox({
+        prompt: '刷新间隔（秒），可选 1/2/3/5/8/10/30/60/120/300',
+        value: String(config.get<number>('intervalSeconds', 10)),
+        validateInput: (v) => (Number(v) >= 1 ? null : '至少 1 秒'),
+      });
+      if (raw) {
+        await config.update('intervalSeconds', Number(raw), vscode.ConfigurationTarget.Global);
+        restartTimer(memento);
+      }
+      break;
+    }
+    case 'symbol':
+      await pickSymbol();
+      break;
+    case 'alert':
+      await setAlert(memento);
+      break;
+    case 'bark': {
+      const key = await vscode.window.showInputBox({
+        prompt: 'Bark device key（留空则只用 VS Code 内置通知）',
+        password: true,
+        ignoreFocusOut: true,
+        value: config.get<string>('barkKey', ''),
+      });
+      if (key !== undefined) await config.update('barkKey', key.trim(), vscode.ConfigurationTarget.Global);
+      break;
+    }
+    case 'pause':
+      await vscode.commands.executeCommand('goldsentry.pause');
+      break;
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   store = new QuoteStore(vscode.Uri.joinPath(context.globalStorageUri, 'quotes.json').fsPath);
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusItem.command = 'goldsentry.show';
+  gearItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+  gearItem.text = '$(gear)';
+  gearItem.tooltip = 'GoldSentry 设置';
+  gearItem.command = 'goldsentry.settings';
+  gearItem.show();
 
   context.subscriptions.push(
     statusItem,
+    gearItem,
+    vscode.commands.registerCommand('goldsentry.settings', () => openSettings(context.globalState)),
     vscode.commands.registerCommand('goldsentry.refresh', () => refresh(context.globalState)),
     vscode.commands.registerCommand('goldsentry.show', showTable),
     vscode.commands.registerCommand('goldsentry.pick', pickSymbol),
@@ -162,11 +254,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  const intervalMs =
-    Math.max(5, vscode.workspace.getConfiguration('goldsentry').get<number>('intervalSeconds', 10)) * 1000;
-  timer = setInterval(() => {
-    if (!paused) void refresh(context.globalState);
-  }, intervalMs);
+  restartTimer(context.globalState);
   context.subscriptions.push({ dispose: () => timer && clearInterval(timer) });
 
   void refresh(context.globalState);

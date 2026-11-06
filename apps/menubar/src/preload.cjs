@@ -12,5 +12,9 @@ contextBridge.exposeInMainWorld('gold', {
   getCapabilities: () => ipcRenderer.invoke('gold:capabilities'),
   setBall: (patch) => ipcRenderer.invoke('gold:set-ball', patch),
   setTaskbar: (patch) => ipcRenderer.invoke('gold:set-taskbar', patch),
+  setDisplay: (patch) => ipcRenderer.invoke('gold:set-display', patch),
+  quit: () => ipcRenderer.send('gold:quit'),
+  notifyTest: () => ipcRenderer.send('gold:notify-test'),
   onUpdate: (callback) => ipcRenderer.on('gold:update', (_event, state) => callback(state)),
+  onMode: (callback) => ipcRenderer.on('panel:mode', (_event, mode) => callback(mode)),
 });

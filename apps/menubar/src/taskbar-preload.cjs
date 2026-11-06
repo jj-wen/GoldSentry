@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('taskbar', {
   moveBy: (dx, dy) => ipcRenderer.send('taskbar:move-by', dx, dy),
   dragEnd: () => ipcRenderer.send('taskbar:drag-end'),
   click: () => ipcRenderer.send('taskbar:click'),
+  rightClick: () => ipcRenderer.send('taskbar:right-click'),
   setSize: (width, height) => ipcRenderer.send('taskbar:size', { width, height }),
   onUpdate: (callback) => ipcRenderer.on('taskbar:update', (_event, data) => callback(data)),
   onLayout: (callback) => ipcRenderer.on('taskbar:layout', (_event, data) => callback(data)),

@@ -34,6 +34,15 @@ const els = {
   ballVal: document.getElementById('ball-opacity-val'),
   taskbarRow: document.getElementById('taskbar-row'),
   taskbarOn: document.getElementById('taskbar-on'),
+  tabDetail: document.getElementById('tab-detail'),
+  tabSettings: document.getElementById('tab-settings'),
+  viewDetail: document.getElementById('view-detail'),
+  viewSettings: document.getElementById('view-settings'),
+  dispName: document.getElementById('disp-name'),
+  dispUp: document.getElementById('disp-up'),
+  dispDown: document.getElementById('disp-down'),
+  notifyTest: document.getElementById('notify-test'),
+  quit: document.getElementById('quit'),
 };
 
 let rulesRendered = false;
@@ -124,6 +133,13 @@ function fillTaskbar(taskbar) {
   els.taskbarOn.checked = !!taskbar.enabled;
 }
 
+function fillDisplay(display) {
+  if (!display) return;
+  els.dispName.checked = !!display.name;
+  els.dispUp.checked = !!display.up;
+  els.dispDown.checked = !!display.down;
+}
+
 function applyState(next) {
   state = next;
   els.stamp.textContent = next.lastPollAt
@@ -141,6 +157,7 @@ function applyState(next) {
   fillBark(next.bark);
   fillBall(next.ball);
   fillTaskbar(next.taskbar);
+  fillDisplay(next.display);
   if (document.activeElement !== els.interval) els.interval.value = String(next.pollSeconds ?? 30);
 }
 
@@ -188,6 +205,29 @@ els.save.addEventListener('click', () => window.gold.saveRules(collectRules()).t
   setTimeout(() => (els.save.textContent = '保存'), 1200);
   if (state) applyState({ ...state, rules });
 }));
+
+function selectTab(mode) {
+  const showSettings = mode === 'settings';
+  els.viewDetail.hidden = showSettings;
+  els.viewSettings.hidden = !showSettings;
+  els.tabDetail.classList.toggle('active', !showSettings);
+  els.tabSettings.classList.toggle('active', showSettings);
+}
+
+els.tabDetail.addEventListener('click', () => selectTab('detail'));
+els.tabSettings.addEventListener('click', () => selectTab('settings'));
+window.gold.onMode(selectTab);
+
+for (const [el, key] of [
+  [els.dispName, 'name'],
+  [els.dispUp, 'up'],
+  [els.dispDown, 'down'],
+]) {
+  el.addEventListener('change', () => window.gold.setDisplay({ [key]: el.checked }).then(fillDisplay));
+}
+
+els.notifyTest.addEventListener('click', () => window.gold.notifyTest());
+els.quit.addEventListener('click', () => window.gold.quit());
 
 window.gold.onUpdate(applyState);
 // 悬浮球与任务栏文字都是 Windows 专属，macOS 用菜单栏本身就有的文字位

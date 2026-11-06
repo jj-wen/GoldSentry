@@ -22,11 +22,30 @@
   ],
   "contributes": {
     "commands": [
-      { "command": "goldsentry.refresh", "title": "GoldSentry: 立即刷新" },
-      { "command": "goldsentry.show", "title": "GoldSentry: 查看全部积存金对比" },
-      { "command": "goldsentry.pick", "title": "GoldSentry: 选择状态栏显示的积存金" },
-      { "command": "goldsentry.alert", "title": "GoldSentry: 设置到价提醒" },
-      { "command": "goldsentry.pause", "title": "GoldSentry: 暂停/继续轮询" }
+      {
+        "command": "goldsentry.refresh",
+        "title": "GoldSentry: 立即刷新"
+      },
+      {
+        "command": "goldsentry.show",
+        "title": "GoldSentry: 查看全部积存金对比"
+      },
+      {
+        "command": "goldsentry.pick",
+        "title": "GoldSentry: 选择状态栏显示的积存金"
+      },
+      {
+        "command": "goldsentry.alert",
+        "title": "GoldSentry: 设置到价提醒"
+      },
+      {
+        "command": "goldsentry.pause",
+        "title": "GoldSentry: 暂停/继续轮询"
+      },
+      {
+        "command": "goldsentry.settings",
+        "title": "GoldSentry: 打开设置"
+      }
     ],
     "configuration": {
       "title": "GoldSentry",
@@ -34,12 +53,21 @@
         "goldsentry.intervalSeconds": {
           "type": "number",
           "default": 10,
-          "description": "轮询间隔（秒）"
+          "description": "轮询间隔（秒），可选 1/2/3/5/8/10/30/60/120/300"
         },
         "goldsentry.symbol": {
           "type": "string",
           "default": "ZS",
-          "enum": ["ZS", "MS", "GS", "GF", "XY", "ZX", "AU9999", "JJC"],
+          "enum": [
+            "ZS",
+            "MS",
+            "GS",
+            "GF",
+            "XY",
+            "ZX",
+            "AU9999",
+            "JJC"
+          ],
           "description": "状态栏默认显示品种"
         },
         "goldsentry.barkKey": {
@@ -51,6 +79,21 @@
           "type": "string",
           "default": "https://api.day.app",
           "description": "Bark 服务器地址，自建服填自己的 https 地址"
+        },
+        "goldsentry.showName": {
+          "type": "boolean",
+          "default": true,
+          "description": "状态栏是否显示品种名称"
+        },
+        "goldsentry.showUp": {
+          "type": "boolean",
+          "default": true,
+          "description": "上涨时是否显示涨跌箭头（红）"
+        },
+        "goldsentry.showDown": {
+          "type": "boolean",
+          "default": true,
+          "description": "下跌时是否显示涨跌箭头（绿）"
         }
       }
     }

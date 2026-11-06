@@ -6,7 +6,13 @@ class MarkdownString {
   appendMarkdown(s) { this.value += s; return this; }
 }
 
-const statusItem = { text: '', tooltip: '', command: '', shown: false, show() { this.shown = true; } };
+const statusItems = [];
+function newStatusItem() {
+  const item = { text: '', tooltip: '', command: '', shown: false, show() { this.shown = true; } };
+  statusItems.push(item);
+  return item;
+}
+let statusItem = null;
 const messages = [];
 const commands = new Map();
 const quickPicks = [];
@@ -20,7 +26,7 @@ const vscode = {
   MarkdownString,
   Uri: { joinPath: (base, name) => ({ fsPath: path.join(base.fsPath, name) }) },
   window: {
-    createStatusBarItem: () => statusItem,
+    createStatusBarItem: () => newStatusItem(),
     showInformationMessage: (msg) => { messages.push(msg); return Promise.resolve(undefined); },
     showWarningMessage: (msg) => { messages.push(`warn: ${msg}`); return Promise.resolve(undefined); },
     setStatusBarMessage: (msg) => { messages.push(msg); return { dispose() {} }; },
@@ -62,6 +68,7 @@ const context = {
 };
 
 ext.activate(context);
+statusItem = statusItems[0];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -92,6 +99,7 @@ function check(label, condition, extra = '') {
 
   // --- 左键状态栏：应弹全量对比列表，回车即切换显示品种 ---
   check('左键绑到新命令 goldsentry.show', statusItem.command === 'goldsentry.show', statusItem.command);
+  check('⚙ 第二项绑定 goldsentry.settings', statusItems[1]?.command === 'goldsentry.settings', String(statusItems[1]?.command));
   check('goldsentry.show 已注册', commands.has('goldsentry.show'));
   check('旧入口 goldsentry.pick 保留', commands.has('goldsentry.pick'));
   check(

@@ -1,8 +1,11 @@
 import {
   clampIntoWorkArea,
   clampOpacity,
+  DEFAULT_DISPLAY,
   detectTaskbar,
   formatPct,
+  normalizeDisplay,
+  showPct,
   formatPrice,
   OPACITY_MAX,
   OPACITY_MIN,
@@ -135,6 +138,18 @@ check(
   negBar?.rect.y === 1040 && placeOnTaskbar({ width: 120, height: 20 }, negBar, null).x === -420,
   JSON.stringify(negBar && placeOnTaskbar({ width: 120, height: 20 }, negBar, null)),
 );
+
+// --- 显示内容开关：三个形态共用同一判定 ---
+const ALL_ON = { name: true, up: true, down: true };
+check('上涨在开关全开时显示', showPct(1.5, ALL_ON));
+check('关掉上涨后不显示涨幅', !showPct(1.5, { name: true, up: false, down: true }));
+check('关掉下跌后不显示跌幅', !showPct(-1.5, { name: true, up: true, down: false }));
+check('平盘归到上涨口径', !showPct(0, { name: true, up: false, down: true }));
+check('缺失涨跌幅不显示', !showPct(undefined, ALL_ON) && !showPct(Number.NaN, ALL_ON));
+check('关掉下跌不影响涨幅', showPct(0.4, { name: true, up: true, down: false }));
+check('脏配置退回默认（全显示）', JSON.stringify(normalizeDisplay(undefined)) === JSON.stringify(DEFAULT_DISPLAY));
+check('非布尔值被丢弃', JSON.stringify(normalizeDisplay({ name: 'no', up: 1 })) === JSON.stringify(DEFAULT_DISPLAY));
+check('合法开关原样保留', JSON.stringify(normalizeDisplay({ name: false, up: false, down: true })) === JSON.stringify({ name: false, up: false, down: true }));
 
 console.log(failures ? `\n${failures} 项未通过` : '\n全部通过');
 // 这里没有常驻定时器，让事件循环自然排空即可；不要 process.exit()（Windows + Node 24 会撞 libuv 断言）

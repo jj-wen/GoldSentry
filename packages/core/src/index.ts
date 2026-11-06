@@ -10,10 +10,14 @@ export { sendBark, sendAlertsToBark, type BarkConfig, type BarkResult } from './
 export {
   clampIntoWorkArea,
   clampOpacity,
+  DEFAULT_DISPLAY,
   formatPct,
   formatPrice,
+  normalizeDisplay,
   OPACITY_MAX,
   OPACITY_MIN,
+  showPct,
+  type DisplayToggles,
   type Rect,
 } from './format.ts';
 export {

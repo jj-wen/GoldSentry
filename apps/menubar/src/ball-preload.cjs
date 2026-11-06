@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('ball', {
   moveBy: (dx, dy) => ipcRenderer.send('ball:move-by', dx, dy),
   dragEnd: () => ipcRenderer.send('ball:drag-end'),
   click: () => ipcRenderer.send('ball:click'),
+  rightClick: () => ipcRenderer.send('ball:right-click'),
   opacityDelta: (delta) => ipcRenderer.send('ball:opacity-delta', delta),
   onUpdate: (callback) => ipcRenderer.on('ball:update', (_event, data) => callback(data)),
 });

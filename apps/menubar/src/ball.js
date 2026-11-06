@@ -38,8 +38,10 @@ el.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
   el.releasePointerCapture(event.pointerId);
-  if (travelled < 5) window.ball.click();
-  else window.ball.dragEnd();
+  if (travelled >= 5) window.ball.dragEnd();
+  // 右键进设置，左键开详情，与托盘保持一致
+  else if (event.button === 2) window.ball.rightClick();
+  else window.ball.click();
 });
 
 el.addEventListener('pointercancel', () => {
@@ -49,4 +51,10 @@ el.addEventListener('pointercancel', () => {
 el.addEventListener('wheel', (event) => {
   event.preventDefault();
   window.ball.opacityDelta(event.deltaY > 0 ? -0.05 : 0.05);
+});
+
+el.addEventListener('contextmenu', (event) => event.preventDefault());
+
+el.addEventListener('pointerdown', (event) => {
+  if (event.button === 2) event.preventDefault();
 });
