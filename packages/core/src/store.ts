@@ -1,5 +1,10 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { beijingDateKey } from './clock.ts';
+import { dayTrendSeries } from './trend.ts';
+import type { TrendOptions, TrendSeries } from './trend.ts';
+
+export { beijingDateKey } from './clock.ts';
 
 export interface Sample {
   symbol: string;
@@ -8,22 +13,14 @@ export interface Sample {
   sellPrice: number;
 }
 
-/** 北京时间的自然日，行情和定价都按这个口径切日 */
-export function beijingDateKey(ts: number): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(ts));
-}
-
 interface StoreShape {
   samples: Sample[];
   lastFiredAt: Record<string, number>;
   /** 规则上次求值是否为真；undefined 表示从未求值过，用于首次静默预热 */
   ruleStates: Record<string, 0 | 1>;
   healthStatus?: 'ok' | 'degraded' | 'offline';
+  /** 连续「全部失效」的次数，用来决定要不要降频；一旦恢复就归零 */
+  failureStreak?: number;
 }
 
 function normalizeStore(raw: unknown): StoreShape {
@@ -33,6 +30,7 @@ function normalizeStore(raw: unknown): StoreShape {
     lastFiredAt: shape.lastFiredAt ?? {},
     ruleStates: shape.ruleStates ?? {},
     healthStatus: shape.healthStatus,
+    failureStreak: shape.failureStreak ?? 0,
   };
 }
 
@@ -67,6 +65,11 @@ export class QuoteStore {
     return ((price - open.buyPrice) / open.buyPrice) * 100;
   }
 
+  /** 面板分时图：当日采样点与汇总；休市时可回退到最近一个有数据的自然日 */
+  trend(symbol: string, now: number, options?: TrendOptions): TrendSeries {
+    return dayTrendSeries(this.data.samples, symbol, now, options);
+  }
+
   canFire(ruleId: string, now: number, cooldownMinutes: number): boolean {
     const last = this.data.lastFiredAt[ruleId];
     return last === undefined || now - last >= cooldownMinutes * 60_000;
@@ -94,7 +97,12 @@ export class QuoteStore {
 
   setHealthStatus(status: 'ok' | 'degraded' | 'offline'): void {
     this.data.healthStatus = status;
+    this.data.failureStreak = status === 'offline' ? (this.data.failureStreak ?? 0) + 1 : 0;
     this.save();
+  }
+
+  failureStreak(): number {
+    return this.data.failureStreak ?? 0;
   }
 
   private prune(): void {

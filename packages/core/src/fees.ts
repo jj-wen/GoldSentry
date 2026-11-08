@@ -37,3 +37,35 @@ export function feeShortText(symbol: string): string {
   const part = (value?: number) => (value === undefined ? '—' : `${value}%`);
   return `${part(fee.buyPct)}/${part(fee.sellPct)}`;
 }
+
+/** 人工核实的费率放久了会失真，超过这个天数就提示重新核对 */
+export const FEE_STALE_DAYS = 90;
+
+export function feeAgeDays(asOf: string, now = Date.now()): number | undefined {
+  const ts = Date.parse(asOf);
+  if (!Number.isFinite(ts)) return undefined;
+  return Math.max(0, Math.floor((now - ts) / 86_400_000));
+}
+
+export interface FeeCell {
+  text: string;
+  stale: boolean;
+  note: string;
+}
+
+/**
+ * 只有真的显示出费率数字时才标"待核对"：
+ * 本来就查不到数字（显示 —）的品种再标黄只是噪音。
+ */
+export function feeCell(symbol: string, now = Date.now()): FeeCell {
+  const fee = PRODUCT_FEES[symbol];
+  const text = feeShortText(symbol);
+  const age = fee ? feeAgeDays(fee.asOf, now) : undefined;
+  const stale = text !== '—' && age !== undefined && age > FEE_STALE_DAYS;
+  const note = fee ? `${fee.note}（截至 ${fee.asOf}）` : '费率未知';
+  return {
+    text: stale ? `${text} ⚠` : text,
+    stale,
+    note: stale ? `${note}；已 ${age} 天未核对，请以银行 App 为准` : note,
+  };
+}

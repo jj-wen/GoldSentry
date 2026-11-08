@@ -59,6 +59,16 @@ export function detectTaskbar(bounds: Rect, workArea: Rect): TaskbarInfo | null 
   return best ? { edge: best.edge, rect: best.rect, thickness: best.value } : null;
 }
 
+/** 全屏窗口所在显示器的矩形是否把任务栏贴纸整块盖住（双屏时只看任务栏那一块） */
+export function coversTaskbar(monitor: Rect, taskbar: Rect): boolean {
+  return (
+    monitor.x <= taskbar.x &&
+    monitor.y <= taskbar.y &&
+    monitor.x + monitor.width >= taskbar.x + taskbar.width &&
+    monitor.y + monitor.height >= taskbar.y + taskbar.height
+  );
+}
+
 /** 默认离任务栏末端（托盘/时钟一侧）留出的距离，避免压住系统托盘 */
 export const TASKBAR_END_MARGIN = 300;
 

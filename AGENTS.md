@@ -13,7 +13,7 @@
 ```bash
 npm run probe        # 真实拉取全部行情（改任何取数/解析代码后必须跑）
 npm run verify:all   # 展示格式/任务栏几何 + 提醒规则 + 健康判定 + Bark 推送 + VS Code bundle 五套断言
-npm run verify:display # 只跑金额格式、透明度、任务栏贴附几何（已并入 verify:all）
+npm run verify:display # 只跑金额格式、透明度、任务栏贴附几何/全屏覆盖、交易时段与更新列（已并入 verify:all）
 npm run verify:alerts  # 只跑提醒规则：id 约定、脏输入清理、上升沿与冷却
 npm run menubar      # 启动菜单栏（内部会先 bundle）
 npm run menubar:dist # 出 dmg
@@ -33,11 +33,11 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
    - 相对导入必须带 `.ts` 后缀；
    - 只用 `import type` 引入类型，否则运行时会去找不存在的导出。
 3. **提醒必须上升沿触发**：条件由假变真才提醒。改 `alerts.ts` 时保住"首轮静默预热"和"同侧不重复"。
-4. **健康状态只在变化时告警**，并区分"取数失败"和"取数成功但数据冻结"。
+4. **健康状态只在变化时告警**，并区分"取数失败"和"取数成功但数据冻结"。**先判交易时段**：周末/法定节假日/节前停夜盘期间报价不动是预期行为，不能报陈旧（`core/market.ts`）。
 5. **不提交任何密钥**。Bark device key 存在用户机器的 `userData/settings.json`，不在仓库里；文档和日志里也不要出现。
 6. **费率不是实时数据**。`fees.ts` 每条都带 `asOf`，改值必须更新日期并说明出处；查不到就显示 `—`，不要编。
 7. **金额展示一律走 core 的 `formatPrice` / `formatPct`**（固定两位小数，缺失显示 `—`），不要在面板、托盘、悬浮球、任务栏文字或扩展里手写 `toFixed`。新增展示位先补 `verify:display`。
-8. **Windows 任务栏文字是覆盖窗口，不是系统内嵌**。几何只从显示器 `bounds` 与 `workArea` 的差推断（`core/taskbar.ts`）；系统任务栏窗口 Electron 读不到，别尝试依赖 `Shell_TrayWnd` 的字段或坐标。
+8. **Windows 任务栏文字是覆盖窗口，不是系统内嵌**。几何只从显示器 `bounds` 与 `workArea` 的差推断（`core/taskbar.ts`）；系统任务栏窗口 Electron 读不到，别尝试依赖 `Shell_TrayWnd` 的字段或坐标。是否因全屏应用隐藏由窗口枚举结果 + `coversTaskbar` 决定（见陷阱表），不要拿全局通知状态判断。
 9. **点击语义不许分形态漂移**：左键=详情、右键=设置，托盘、悬浮球、任务栏文字一致。托盘不设 `contextMenu`（否则右键被菜单抢占），菜单项全部放在面板设置页里。VS Code 状态栏做不到左右键区分，用第二个 `$(gear)` 项承担设置入口，改动要在 README 与代码注释里说明这是平台限制。
 10. **显示什么由 core 决定，不由外壳决定**。品种名/箭头/颜色一律走 `settings.display` + `core/format.ts` 的 `priceTone`（颜色：涨红跌绿，**持平与未知都是白色**）、`showArrow`（箭头：该方向被关掉或持平就不出现）、`arrowModeOf` / `displayFromArrowMode`（面板那个"涨跌箭头"下拉框与两个布尔的互转）与 `normalizeDisplay`；新增展示位时不要自己判断方向。关掉某个方向**只隐藏箭头，不能把价格颜色也一起变白**（曾经踩过： tone 跟着开关走，关下跌后绿色价格变成白色，看着像数据挂了）。
 
@@ -62,16 +62,21 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 | 改成 `process.exitCode` 后验证脚本挂住不退出 | 扩展/外壳自己挂了 `setInterval` 轮询，事件循环永远排不空 | 收尾先 dispose 掉注册的 disposable（`subscriptions.forEach(d => d.dispose?.())`），再设 `exitCode` |
 | 任务栏文字位置/宽度不对，或任务栏自动隐藏后文字仍悬空 | Electron 没有读取系统任务栏的 API，位置只能由 `bounds` 与 `workArea` 的差推断 | 改 `core/taskbar.ts` 先跑 `verify:display`；两者几乎相等（自动隐藏）时必须隐藏；`placeOnTaskbar` 负责夹回任务栏范围 |
 | preload 发了 IPC 但主进程毫无反应 | `ipcRenderer.send('x', a, b)` 与 `ipcMain.on('x', (_e, obj) => obj.a)` 参数形态不一致，`obj.a` 为 `undefined` 后静默早退 | 统一成单个对象参数（`send('x', { a, b })`）；IPC 入口先打一行日志确认消息真的到达 |
-| 面板改完设置后表格整块变空 | handler 返回了局部字段（如顺序数组），而渲染层写的是 `.then(applyState)`，`innerHTML=''` 之后取 `next.quotes` 抛异常 | 凡是喂给 `applyState` 的 handler 一律返回完整 `state`；新增 IPC 先确认返回值形态再写 `.then` |
+| 面板改完设置后表格整块变空，或点刷新后控制台抛异常 | handler 返回了局部字段（如顺序数组）甚至 `void`，而渲染层写的是 `.then(applyState)`，`innerHTML=''` 之后取 `next.quotes` 抛异常 | 凡是喂给 `applyState` 的 handler 一律返回完整 `state`（异步的先 `await` 再 return）；新增 IPC 先确认返回值形态再写 `.then` |
 | CDP 合成指针事件点了没反应，或面板/球不响应 | 合成 `PointerEvent` 没有真实 `pointerId`，`setPointerCapture` / `releasePointerCapture` 抛错会把后面的 `click()` 一起打断 | 自动化时先把这两个方法空掉再派发；不要为此改生产代码 |
 | 窗口刚创建就发消息，界面停在默认状态 | `show: false` 的窗口 `loadFile` 是异步的，`did-finish-load` 之前 `webContents.send` 会被丢 | 用 `panelReady` / `pendingMode` 这类标记在加载完成后补发；只靠"下一次轮询"会表现成偶发错乱 |
 | 任务栏文字/悬浮球抢焦点、出现在 Alt+Tab | 普通 `BrowserWindow` 会被当成应用窗口 | `focusable:false` + `skipTaskbar:true` + `alwaysOnTop`，用 `showInactive()` 显示 |
 | 任务栏文字拖一下整块看不见（窗口还在、`innerText` 仍在更新） | Windows 上 Chromium 用 DWM 遮挡计算判断窗口可见性；`focusable:false` 的置顶透明窗口盖在任务栏上容易被判成"全被遮挡"，于是停止绘制 | 启动时 `app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')`（仅 win32）。诊断时看渲染层的 `document.visibilityState`，光看 Win32 `IsWindowVisible` 会误判成正常 |
 | 任务栏文字拖到最右就"消失"在时钟下面 | 可拖范围以前只夹到 `rect.width - width`，没减托盘安全边距 | `placeOnTaskbar` 的夹取上限同样减 `TASKBAR_END_MARGIN`；改几何先跑 `verify:display` |
+| 全屏看视频时任务栏文字仍压在画面上 | 全屏应用的 `display.bounds` / `workArea` 不变，`detectTaskbar` 仍认为任务栏存在；`SHQueryUserNotificationState` 是整机全局状态（副屏全屏也会报繁忙），不能用来决定该隐藏哪一块 | `apps/menubar/src/fullscreen.ts` 用常驻 PowerShell 探针枚举可见且有标题的顶层窗口，把「窗口矩形≈所在显示器矩形」的显示器交给 `core/taskbar.ts` 的 `coversTaskbar`；只有全屏显示器盖住任务栏贴纸那块才隐藏，改这块先跑 `verify:display` |
+| 退出全屏后任务栏文字再也不回来 | 枚举时把 DWM 已隐藏（`DWMWA_CLOAKED`）的窗口和桌面窗口当成了全屏：本机 `TextInputHost` 的「Windows 默认锁屏界面」`IsWindowVisible=true`、矩形正好 1920×1080，`Program Manager` 也会命中；全屏集合永远非空，探针就不再输出变化 | 探针必须跳过 `DwmGetWindowAttribute(hwnd, 14) != 0` 的窗口，以及 `Progman` / `WorkerW` / `Shell_TrayWnd` / `Shell_SecondaryTrayWnd` 这些壳类名；验证时临时忽略 Chrome 进程，全屏集合应为空 |
 | 悬浮球放大后拖动比鼠标快 | `setZoomFactor` 放大页面后，1 个 CSS 像素 = scale 个屏幕像素，`movementX/Y` 是 CSS 像素 | `ball:move-by` 里把增量乘回 `settings.ball.scale` 再 `setPosition` |
 | 面板长按拖拽排序"没反应" | 计时未到就移动被判定成普通手势并取消了长按 | 长按计时期间不要取消，到点且仍按住就进入拖拽并用最新指针位置排一次；进入前的移动要抑制随后的 click，否则会误改主显品种 |
 | 托盘右键不触发设置，弹的是菜单 | `tray.setContextMenu()` 会抢占 right-click 事件 | 需要右键自定义行为时不要设 contextMenu，把菜单项搬进面板；`tray.on('right-click', ...)` 才会生效 |
+| 周末/节假日面板报「部分异常 / 全部报价陈旧」 | 陈旧判定不看交易时段，银行休市时报价当然不动 | 陈旧循环只在 `marketSessionAt(now).open` 时执行；节假日表每年按上金所公告更新 `core/market.ts`，并同步 `MARKET_SCHEDULE_AS_OF` |
 | 新增第二个状态栏项后 `verify:vscode` 报假失败 | 桩里 `createStatusBarItem` 每次返回同一个对象，后一项覆盖前一项的 `command` | 桩改成注册表（数组），按创建顺序分别断言；断言前要先取 `statusItems[0]` |
+| 设了 `hidden` 的行/块仍然显示（DOM 里 `.hidden === true`） | 作者样式 `.ball-row { display:flex }` 优先级高于 UA 的 `[hidden] { display:none }` | 全局补 `[hidden] { display:none !important }`；自动化断言要用 `getComputedStyle(...).display`，只查 `.hidden` 会假通过，截图才看得见 |
+| 暂停轮询后再恢复，永远不再刷新 | 暂停时 `clearInterval` 清掉了定时器，恢复只刷新一次却没重建 | 用每轮重排的 `setTimeout` 链，暂停只跳过取数、链保持活着；改轮询节奏时顺带检查 dispose/deactivate 清的是 `clearTimeout` |
 
 ## 新增一家银行/一个数据源
 

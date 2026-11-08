@@ -2,6 +2,23 @@ export type { Quote, QuoteSource, PriceBasis } from './types.ts';
 export { ccbSource, parseAccountGoldXml } from './sources/ccb.ts';
 export { jdSource, parseBatchPrice, JD_PRODUCT_SKUS } from './sources/jd.ts';
 export { QuoteStore, beijingDateKey } from './store.ts';
+export { beijingDayStart, beijingHhmm } from './clock.ts';
+export {
+  dayTrendSeries,
+  DEFAULT_TREND_SETTINGS,
+  normalizeTrendRange,
+  normalizeTrendSettings,
+  TREND_GAP_MS,
+  TREND_MAX_POINTS,
+  TREND_RANGE_ORDER,
+  TREND_RANGE_TEXT,
+  type TrendOptions,
+  type TrendPoint,
+  type TrendRange,
+  type TrendSampleLike,
+  type TrendSeries,
+  type TrendSettings,
+} from './trend.ts';
 export {
   compileRules,
   evaluateRules,
@@ -18,7 +35,9 @@ export {
 } from './alerts.ts';
 export { pollOnce, type PollResult } from './poller.ts';
 export { assessHealth, type HealthReport, type HealthStatus } from './health.ts';
-export { feeOf, feeShortText, PRODUCT_FEES, type FeeInfo } from './fees.ts';
+export { marketSessionAt, MARKET_SCHEDULE_AS_OF, type MarketSession } from './market.ts';
+export { feeAgeDays, feeCell, feeOf, feeShortText, FEE_STALE_DAYS, PRODUCT_FEES, type FeeCell, type FeeInfo } from './fees.ts';
+export { backoffSeconds, BACKOFF_AFTER_FAILURES, BACKOFF_MAX_SECONDS } from './backoff.ts';
 export { sendBark, sendAlertsToBark, type BarkConfig, type BarkResult } from './notify.ts';
 export {
   applySymbolOrder,
@@ -45,6 +64,7 @@ export {
   scaledSquare,
   showArrow,
   spreadCell,
+  updateAgeText,
   type ArrowMode,
   type DisplayToggles,
   type PriceTone,
@@ -53,6 +73,7 @@ export {
   type SpreadCell,
 } from './format.ts';
 export {
+  coversTaskbar,
   detectTaskbar,
   placeOnTaskbar,
   TASKBAR_END_MARGIN,

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { QuoteStore, feeShortText, formatPct, formatPrice, pollOnce, priceTone, sendAlertsToBark, showArrow, sources, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
+import { QuoteStore, backoffSeconds, feeCell, formatPct, formatPrice, pollOnce, priceTone, sendAlertsToBark, showArrow, sources, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
 
 const COOLDOWN_MINUTES = 30;
 
@@ -10,6 +10,9 @@ let timer: NodeJS.Timeout | undefined;
 let quotes: Quote[] = [];
 let lastMillis = 0;
 let paused = false;
+let failureStreak = 0;
+let marketClosed = false;
+let closedReason = '';
 
 function rulesFromMemento(memento: vscode.Memento): AlertRule[] {
   return memento.get<AlertRule[]>('rules', []);
@@ -51,6 +54,9 @@ async function refresh(memento: vscode.Memento): Promise<void> {
   const result = await pollOnce(sources, store, rules);
   lastMillis = Date.now() - t0;
   quotes = result.quotes;
+  failureStreak = result.failureStreak;
+  marketClosed = result.health.marketClosed;
+  closedReason = result.health.closedReason;
 
   renderStatus(quotes.find((q) => q.symbol === symbolSetting()) ?? quotes[0], result.errors);
 
@@ -83,11 +89,17 @@ function buildTooltip(errors: string[]): vscode.MarkdownString {
     md.appendMarkdown(
       `| ${q.label} | ${formatPrice(q.buyPrice)} | ${formatPrice(q.sellPrice)} | ${formatPrice(q.spread)} | ` +
         `${formatPct(q.dayChangePct)} | ` +
-        `${feeShortText(q.symbol)} |\n`,
+        `${feeCell(q.symbol).text} |\n`,
     );
   }
-  md.appendMarkdown('\n_费用为人工核实的公开费率，非实时；点差 0 多为上游只给单边价_\n');
+  md.appendMarkdown('\n_费用为人工核实的公开费率，非实时；点差 0 多为上游只给单边价；带 ⚠ 表示核实已超过 90 天，请以银行 App 为准_\n');
   md.appendMarkdown('_涨跌幅口径以各行 App 为准，不同银行“昨收”定义不同，勿横向比较；建行日价为 10:30 定价 + 盘中赎回价_\n');
+  const base = Math.max(1, vscode.workspace.getConfiguration('goldsentry').get<number>('intervalSeconds', 10));
+  const effective = backoffSeconds(base, failureStreak);
+  if (effective > base) {
+    md.appendMarkdown(`\n_数据源已连续失效 ${failureStreak} 次，暂时降频到 ${effective} 秒，恢复后自动回到 ${base} 秒_\n`);
+  }
+  if (marketClosed) md.appendMarkdown(`\n_休市（${closedReason}），报价不更新属正常，开市后自动恢复_\n`);
   if (errors.length) md.appendMarkdown(`\n⚠️ ${errors.join('; ')}`);
   md.appendMarkdown('\n\n_点击状态栏看完整对比，选中一行即切换显示品种_');
   return md;
@@ -105,7 +117,7 @@ async function showTable(): Promise<void> {
     description: `卖 ${formatPrice(q.sellPrice)} · 点差 ${formatPrice(q.spread)} · 涨跌 ${formatPct(q.dayChangePct)}`,
     detail:
       `${q.symbol === current ? '$(star-full) 状态栏显示中 · ' : ''}` +
-      `费用 ${feeShortText(q.symbol)} · 报价 ${new Date(q.quotedAt).toLocaleTimeString('zh-CN', { hour12: false })} · ${q.basis}`,
+      `费用 ${feeCell(q.symbol).text} · 报价 ${new Date(q.quotedAt).toLocaleTimeString('zh-CN', { hour12: false })} · ${q.basis}`,
     symbol: q.symbol,
   }));
   const picked = await vscode.window.showQuickPick(items, {
@@ -158,12 +170,17 @@ async function setAlert(memento: vscode.Memento): Promise<void> {
   void vscode.window.setStatusBarMessage(`GoldSentry：已设 ${picked.label} ${direction.value} ${raw}`, 4000);
 }
 
+/** 每轮结束后按当前失效次数重排下一次，连续全部失效时自动降频 */
 function restartTimer(memento: vscode.Memento): void {
-  if (timer) clearInterval(timer);
-  const seconds = Math.max(1, vscode.workspace.getConfiguration('goldsentry').get<number>('intervalSeconds', 10));
-  timer = setInterval(() => {
-    if (!paused) void refresh(memento);
-  }, seconds * 1000);
+  if (timer) clearTimeout(timer);
+  const base = Math.max(1, vscode.workspace.getConfiguration('goldsentry').get<number>('intervalSeconds', 10));
+  timer = setTimeout(() => {
+    if (paused) {
+      restartTimer(memento);
+      return;
+    }
+    void refresh(memento).finally(() => restartTimer(memento));
+  }, backoffSeconds(base, failureStreak) * 1000);
 }
 
 /** 状态栏项点不到右键，所以设置走旁边那个 ⚙ 项 */
@@ -249,18 +266,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('goldsentry.alert', () => setAlert(context.globalState)),
     vscode.commands.registerCommand('goldsentry.pause', () => {
       paused = !paused;
-      if (paused && timer) clearInterval(timer);
+      // 定时器链保持活着，暂停只是跳过取数；清掉它会导致恢复后永远不再轮询
       if (!paused) void refresh(context.globalState);
       void vscode.window.setStatusBarMessage(paused ? 'GoldSentry：已暂停轮询' : 'GoldSentry：已恢复轮询', 3000);
     }),
   );
 
   restartTimer(context.globalState);
-  context.subscriptions.push({ dispose: () => timer && clearInterval(timer) });
+  context.subscriptions.push({ dispose: () => timer && clearTimeout(timer) });
 
   void refresh(context.globalState);
 }
 
 export function deactivate(): void {
-  if (timer) clearInterval(timer);
+  if (timer) clearTimeout(timer);
 }

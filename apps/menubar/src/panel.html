@@ -21,13 +21,27 @@
     <div id="errors" class="errors" hidden></div>
 
     <main id="view-detail">
+      <section id="trend" class="trend" hidden>
+        <div class="trend-head" id="trend-head">
+          <span id="trend-title" class="trend-title">今日分时</span>
+          <span id="trend-last" class="trend-last">—</span>
+          <span id="trend-pct" class="trend-pct">—</span>
+          <span id="trend-range" class="trend-range"></span>
+        </div>
+        <div class="trend-canvas" id="trend-canvas">
+          <svg id="trend-svg" viewBox="0 0 416 64" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <div id="trend-tip" class="trend-tip" hidden></div>
+          <div id="trend-empty" class="trend-empty" hidden>该区间暂无采样</div>
+        </div>
+        <div class="trend-axis" id="trend-axis" hidden><span>00:00</span><span>12:00</span><span>24:00</span></div>
+      </section>
       <table id="quotes">
         <thead>
           <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>更新</th></tr>
         </thead>
         <tbody></tbody>
       </table>
-      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序。点差列优先显示买入卖一的点差，点差为 0 时显示服务费（鼠标悬停看口径）。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。</p>
+      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序。点差列优先显示买入卖一的点差，点差为 0 时显示服务费（鼠标悬停看口径）。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。</p>
     </main>
 
     <main id="view-settings" hidden>
@@ -39,6 +53,16 @@
           <select id="disp-arrow"></select>
         </div>
         <p class="hint">作用于菜单栏标题以外的悬浮球与任务栏文字：选择只决定箭头出不出现，价格颜色始终按真实涨跌（涨红跌绿，持平才是白色）。</p>
+      </section>
+
+      <section class="rules">
+        <div class="rules-head"><span>分时图</span></div>
+        <div class="disp-row">
+          <label><input type="checkbox" id="trend-on" /> 显示分时图</label>
+          <span class="lbl">时间范围</span>
+          <select id="trend-range-select"></select>
+        </div>
+        <p class="hint">详情页顶部展示主显品种曲线；涨跌按所选区间首笔采样计算。休市时自动展示最近一个有数据的交易日。</p>
       </section>
 
       <div class="interval-row">
@@ -56,6 +80,12 @@
           <option value="300">5 分钟</option>
         </select>
         <span class="warn">过快可能触发上游风控</span>
+      </div>
+      <p class="hint" id="interval-note" hidden></p>
+
+      <div class="ball-row" id="login-row" hidden>
+        <label class="on"><input type="checkbox" id="login-on" /> 开机自启</label>
+        <span class="lbl">登录系统后自动运行 GoldSentry</span>
       </div>
 
       <div class="ball-row" id="taskbar-row" hidden>

@@ -1,12 +1,3 @@
-function ageText(quotedAt, basis) {
-  if (!Number.isFinite(quotedAt)) return '未知';
-  const minutes = Math.max(0, Math.round((Date.now() - quotedAt) / 60000));
-  if (basis === 'dailyFix') return minutes >= 60 ? `${Math.round(minutes / 60)} 小时前` : '今日已定价';
-  if (minutes < 1) return '刚刚';
-  if (minutes < 60) return `${minutes} 分钟前`;
-  return `${Math.round(minutes / 60)} 小时前`;
-}
-
 const els = {
   stamp: document.getElementById('stamp'),
   health: document.getElementById('health'),
@@ -16,6 +7,9 @@ const els = {
   save: document.getElementById('save'),
   refresh: document.getElementById('refresh'),
   interval: document.getElementById('interval'),
+  intervalNote: document.getElementById('interval-note'),
+  loginRow: document.getElementById('login-row'),
+  loginOn: document.getElementById('login-on'),
   barkOn: document.getElementById('bark-on'),
   barkServer: document.getElementById('bark-server'),
   barkKey: document.getElementById('bark-key'),
@@ -36,8 +30,19 @@ const els = {
   tabSettings: document.getElementById('tab-settings'),
   viewDetail: document.getElementById('view-detail'),
   viewSettings: document.getElementById('view-settings'),
+  trend: document.getElementById('trend'),
+  trendTitle: document.getElementById('trend-title'),
+  trendLast: document.getElementById('trend-last'),
+  trendPct: document.getElementById('trend-pct'),
+  trendRange: document.getElementById('trend-range'),
+  trendSvg: document.getElementById('trend-svg'),
+  trendTip: document.getElementById('trend-tip'),
+  trendEmpty: document.getElementById('trend-empty'),
+  trendAxis: document.getElementById('trend-axis'),
   dispName: document.getElementById('disp-name'),
   dispArrow: document.getElementById('disp-arrow'),
+  trendOn: document.getElementById('trend-on'),
+  trendRangeSelect: document.getElementById('trend-range-select'),
   notifyTest: document.getElementById('notify-test'),
   quit: document.getElementById('quit'),
 };
@@ -55,19 +60,18 @@ function renderQuotes(next) {
   const spreadCells = next.spreadCells ?? {};
   for (const quote of next.quotes) {
     const row = document.createElement('tr');
-    const stale = quote.basis === 'realtime' && Date.now() - quote.quotedAt > 30 * 60000;
     const primary = quote.symbol === next.primarySymbol;
-    // 买/卖/涨跌与点差列的文本都由 core 生成，这里只负责贴
-    const cell = cells[quote.symbol] ?? { buy: '—', sell: '—', pct: '—', tone: 'flat' };
-    const spread = spreadCells[quote.symbol] ?? { text: '—', basis: 'fee', note: '点差与费率均未知' };
+    // 买/卖/涨跌/更新列与点差的文本都由 core 生成，这里只负责贴
+    const cell = cells[quote.symbol] ?? { buy: '—', sell: '—', pct: '—', tone: 'flat', update: '—', updateStale: false };
+    const spread = spreadCells[quote.symbol] ?? { text: '—', basis: 'fee', note: '点差与费率均未知', stale: false };
     row.dataset.symbol = quote.symbol;
     if (primary) row.classList.add('primary');
     row.innerHTML = `<td class="name" title="${escAttr(quote.name)}">${primary ? '● ' : ''}${escAttr(quote.label)}</td>
       <td class="buy">${cell.buy}</td>
       <td>${cell.sell}</td>
-      <td class="spread" title="${escAttr(spread.note)}">${spread.text}</td>
+      <td class="spread${spread.stale ? ' stale-fee' : ''}" title="${escAttr(spread.note)}">${spread.text}</td>
       <td class="${TONE_CLASS[cell.tone] ?? ''}">${cell.pct}</td>
-      <td class="${stale ? 'stale' : ''}">${ageText(quote.quotedAt, quote.basis)}</td>`;
+      <td class="${cell.updateStale ? 'stale' : ''}">${cell.update}</td>`;
     row.addEventListener('click', () => {
       // 拖拽结束也会补一次 click，手势不能同时改主显品种
       if (suppressClick) return;
@@ -76,6 +80,136 @@ function renderQuotes(next) {
     els.body.appendChild(row);
   }
 }
+
+/** 分时图：坐标与颜色都由 core 的 trend 数据决定，这里只画线 */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const TREND_W = 416;
+const TREND_H = 64;
+const TREND_PAD = 6;
+const TREND_TONE = { up: '#ef5350', down: '#26a269', flat: '#9a9ba1' };
+
+let trendView = null;
+
+function svgNode(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  return node;
+}
+
+function trendX(ts) {
+  return ((ts - trendView.windowStart) / (trendView.windowEnd - trendView.windowStart)) * TREND_W;
+}
+
+function trendY(price) {
+  return TREND_H - TREND_PAD - ((price - trendView.min) / (trendView.max - trendView.min)) * (TREND_H - TREND_PAD * 2);
+}
+
+function hideTrendTip() {
+  els.trendTip.hidden = true;
+  if (!trendView) return;
+  trendView.line.setAttribute('visibility', 'hidden');
+  trendView.dot.setAttribute('visibility', 'hidden');
+}
+
+function renderTrend(trend, label) {
+  trendView = null;
+  els.trendTip.hidden = true;
+  els.trendSvg.replaceChildren();
+  if (!trend) {
+    els.trend.hidden = true;
+    return;
+  }
+  els.trend.hidden = false;
+  const points = trend.points ?? [];
+  const title = label || trend.symbol;
+  els.trendTitle.textContent = `${title} · ${trend.windowText ?? (trend.isToday ? '今日分时' : `${trend.day.slice(5)} 分时`)}`;
+  els.trendTitle.title = '来自本机轮询采样（应用启动后开始累积），涨跌相对所选区间首笔；休市时展示最近一个有数据的交易日。';
+  els.trendLast.textContent = trend.lastText ?? '—';
+  els.trendPct.textContent = trend.changeText ?? '—';
+  els.trendPct.className = `trend-pct ${trend.tone ?? 'flat'}`;
+  els.trendPct.title = '相对所选区间首笔采样';
+  els.trendRange.textContent = points.length ? `低 ${trend.lowText} · 高 ${trend.highText}` : '';
+  els.trendEmpty.hidden = points.length > 0;
+  els.trendAxis.hidden = points.length === 0;
+  const labels = trend.axisLabels ?? [];
+  if (labels.length === 3) {
+    [...els.trendAxis.children].forEach((node, index) => {
+      node.textContent = labels[index];
+    });
+  }
+  if (!points.length) return;
+
+  const span = trend.high - trend.low;
+  const pad = span > 0 ? span * 0.08 : Math.max(trend.high * 0.0004, 0.01);
+  const color = TREND_TONE[trend.tone] ?? TREND_TONE.flat;
+  trendView = {
+    points,
+    windowStart: trend.windowStart,
+    windowEnd: trend.windowEnd,
+    min: trend.low - pad,
+    max: trend.high + pad,
+    line: svgNode('line', { y1: 0, y2: TREND_H, stroke: '#6c6e75', 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden' }),
+    dot: svgNode('circle', { r: 2.4, fill: color, stroke: '#1c1e22', 'stroke-width': 1, visibility: 'hidden' }),
+  };
+
+  els.trendSvg.appendChild(
+    svgNode('line', { x1: 0, y1: TREND_H / 2, x2: TREND_W, y2: TREND_H / 2, stroke: '#2e3138', 'stroke-width': 1, 'stroke-dasharray': '2 4' }),
+  );
+
+  // 午休/收盘的时间空档要断开，否则会连出一条不存在的斜线
+  const base = TREND_H - 1;
+  let segment = [];
+  const flush = () => {
+    if (!segment.length) return;
+    if (segment.length === 1) {
+      els.trendSvg.appendChild(svgNode('circle', { cx: trendX(segment[0].ts), cy: trendY(segment[0].price), r: 2, fill: color }));
+    } else {
+      const coords = segment.map((p) => `${trendX(p.ts).toFixed(2)},${trendY(p.price).toFixed(2)}`);
+      const first = trendX(segment[0].ts).toFixed(2);
+      const last = trendX(segment[segment.length - 1].ts).toFixed(2);
+      const area = `M${first},${base} ${coords.map((c) => `L${c}`).join(' ')} L${last},${base} Z`;
+      els.trendSvg.appendChild(svgNode('path', { d: area, fill: color, 'fill-opacity': 0.12 }));
+      els.trendSvg.appendChild(
+        svgNode('path', { d: `M${coords.join(' L')}`, fill: 'none', stroke: color, 'stroke-width': 1.2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }),
+      );
+    }
+    segment = [];
+  };
+  for (const point of points) {
+    if (point.gap) flush();
+    segment.push(point);
+  }
+  flush();
+
+  els.trendSvg.appendChild(trendView.line);
+  els.trendSvg.appendChild(trendView.dot);
+  els.trendSvg.appendChild(svgNode('rect', { x: 0, y: 0, width: TREND_W, height: TREND_H, fill: 'transparent' }));
+}
+
+els.trendSvg.addEventListener('pointermove', (event) => {
+  if (!trendView) return;
+  const box = els.trendSvg.getBoundingClientRect();
+  const fraction = Math.min(Math.max((event.clientX - box.left) / box.width, 0), 1);
+  const ts = trendView.windowStart + fraction * (trendView.windowEnd - trendView.windowStart);
+  let nearest = trendView.points[0];
+  for (const point of trendView.points) {
+    if (Math.abs(point.ts - ts) < Math.abs(nearest.ts - ts)) nearest = point;
+  }
+  const x = trendX(nearest.ts);
+  const y = trendY(nearest.price);
+  trendView.line.setAttribute('x1', x);
+  trendView.line.setAttribute('x2', x);
+  trendView.line.setAttribute('visibility', 'visible');
+  trendView.dot.setAttribute('cx', x);
+  trendView.dot.setAttribute('cy', y);
+  trendView.dot.setAttribute('visibility', 'visible');
+  els.trendTip.textContent = `${nearest.timeText} · ${nearest.text}`;
+  els.trendTip.hidden = false;
+  els.trendTip.style.left = `${Math.min(Math.max((x / TREND_W) * 100, 14), 86)}%`;
+  els.trendTip.style.top = `${y > 20 ? y - 20 : y + 4}px`;
+});
+
+els.trendSvg.addEventListener('pointerleave', hideTrendTip);
 
 function symbolOptions(extra) {
   const list = (state?.quotes ?? []).map((q) => ({ value: q.symbol, text: q.label }));
@@ -181,6 +315,16 @@ function fillDisplay(display, arrowMode) {
   if (arrowMode) els.dispArrow.value = arrowMode;
 }
 
+function fillTrendSettings(settings, ranges) {
+  if (!settings) return;
+  els.trendOn.checked = !!settings.enabled;
+  if (ranges?.length && els.trendRangeSelect.options.length !== ranges.length) {
+    els.trendRangeSelect.innerHTML = optionTags(ranges.map((r) => ({ value: r.range, text: r.text })), settings.range);
+  }
+  if (document.activeElement !== els.trendRangeSelect) els.trendRangeSelect.value = settings.range;
+  els.trendRangeSelect.disabled = !settings.enabled;
+}
+
 function applyState(next) {
   state = next;
   els.stamp.textContent = next.lastPollAt
@@ -190,17 +334,32 @@ function applyState(next) {
   els.errors.hidden = reasons.length === 0;
   els.errors.textContent = reasons.join('；');
   if (els.health) {
-    els.health.textContent = HEALTH_TEXT[next.health?.status ?? 'ok'] ?? '';
-    els.health.dataset.status = next.health?.status ?? 'ok';
+    const status = next.health?.status ?? 'ok';
+    const closed = status === 'ok' && !!next.health?.marketClosed;
+    els.health.textContent = closed ? '休市' : (HEALTH_TEXT[status] ?? '');
+    els.health.dataset.status = closed ? 'closed' : status;
+    els.health.title = closed ? (next.health?.closedReason ?? '') : '';
   }
   // 拖拽进行中不能重建表格，否则正在拖的那一行会被换掉
   if (!hold?.dragging) renderQuotes(next);
+  const primary = (next.quotes ?? []).find((q) => q.symbol === next.primarySymbol);
+  renderTrend(next.trend ?? null, primary?.label ?? '');
   renderRules(next);
   fillBark(next.bark);
   fillBall(next.ball);
   fillTaskbar(next.taskbar);
   fillDisplay(next.display, next.arrowMode);
+  fillTrendSettings(next.trendSettings, next.trendRanges);
   if (document.activeElement !== els.interval) els.interval.value = String(next.pollSeconds ?? 30);
+  // 降频是 core 算的，面板只把"为什么变慢了"说清楚
+  const base = next.pollSeconds ?? 30;
+  const effective = next.effectivePollSeconds ?? base;
+  const backingOff = effective > base;
+  els.intervalNote.hidden = !backingOff;
+  els.intervalNote.textContent = backingOff
+    ? `数据源已连续失效 ${next.failureStreak ?? 0} 次，暂时降频到 ${effective} 秒；恢复后自动回到设定值。`
+    : '';
+  els.loginOn.checked = !!next.launchAtLogin;
 }
 
 els.interval.addEventListener('change', async () => {
@@ -215,6 +374,8 @@ els.ballOn.addEventListener('change', async () => {
 });
 
 els.taskbarOn.addEventListener('change', () => window.gold.setTaskbar({ enabled: els.taskbarOn.checked }));
+
+els.loginOn.addEventListener('change', () => window.gold.setLaunchAtLogin(els.loginOn.checked).then(applyState));
 
 // 透明度要即时反馈，用 input 而不是 change
 els.ballOpacity.addEventListener('input', async () => {
@@ -278,6 +439,14 @@ els.dispArrow.addEventListener('change', () =>
     fillDisplay(saved.display, saved.arrowMode);
     els.dispArrow.value = saved.arrowMode;
   }),
+);
+
+els.trendOn.addEventListener('change', () =>
+  window.gold.setTrend({ enabled: els.trendOn.checked }).then(applyState),
+);
+
+els.trendRangeSelect.addEventListener('change', () =>
+  window.gold.setTrend({ range: els.trendRangeSelect.value }).then(applyState),
 );
 
 function rowsInDom() {
@@ -370,6 +539,7 @@ window.gold.onUpdate(applyState);
 // 悬浮球与任务栏文字都是 Windows 专属，macOS 用菜单栏本身就有的文字位
 window.gold.getCapabilities().then(async (caps) => {
   if (caps.taskbar) els.taskbarRow.hidden = false;
+  if (caps.loginItem) els.loginRow.hidden = false;
   if (!caps.ball) return;
   els.ballRow.hidden = false;
   els.ballScaleRow.hidden = false;

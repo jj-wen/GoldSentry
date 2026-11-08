@@ -9,12 +9,15 @@ import {
   BALL_BASE_SIZE,
   BALL_SCALE_MAX,
   BALL_SCALE_MIN,
+  backoffSeconds,
   ballSizeFor,
   clampBallScale,
   clampIntoWorkArea,
   clampOpacity,
   compileRules,
+  coversTaskbar,
   DEFAULT_DISPLAY,
+  DEFAULT_TREND_SETTINGS,
   detectTaskbar,
   displayFromArrowMode,
   formatPct,
@@ -22,6 +25,7 @@ import {
   formatQuoteCells,
   normalizeDisplay,
   normalizeSymbolOrder,
+  normalizeTrendSettings,
   OPACITY_MAX,
   OPACITY_MIN,
   placeOnTaskbar,
@@ -39,6 +43,8 @@ import {
   sources,
   spreadCell,
   TASKBAR_END_MARGIN,
+  TREND_RANGE_ORDER,
+  TREND_RANGE_TEXT,
   type AlertRule,
   type ArrowMode,
   type BarkConfig,
@@ -51,7 +57,11 @@ import {
   type RuleKind,
   type SpreadCell,
   type TaskbarInfo,
+  type TrendRange,
+  type TrendSeries,
+  type TrendSettings,
 } from '@goldsentry/core';
+import { watchFullscreen } from './fullscreen.ts';
 
 app.name = 'GoldSentry';
 
@@ -80,6 +90,10 @@ interface State {
   lastPollAt: number;
   primarySymbol: string;
   pollSeconds: number;
+  /** 实际生效的间隔：数据源连续失效时会被 core 的退避拉长 */
+  effectivePollSeconds: number;
+  failureStreak: number;
+  launchAtLogin: boolean;
   display: DisplayToggles;
   arrowMode: ArrowMode;
   arrowModes: Array<{ mode: ArrowMode; text: string }>;
@@ -93,6 +107,10 @@ interface State {
   ball: Settings['ball'];
   taskbar: Settings['taskbar'];
   health: HealthReport;
+  /** 主显品种的分时序列；关闭分时图或首轮取数前为 null */
+  trend: TrendSeries | null;
+  trendSettings: TrendSettings;
+  trendRanges: Array<{ range: TrendRange; text: string }>;
 }
 
 let state: State = {
@@ -102,6 +120,9 @@ let state: State = {
   lastPollAt: 0,
   primarySymbol: 'ZS',
   pollSeconds: 30,
+  effectivePollSeconds: 30,
+  failureStreak: 0,
+  launchAtLogin: false,
   display: { name: true, up: true, down: true },
   arrowMode: 'both',
   arrowModes: ARROW_MODE_ORDER.map((mode) => ({ mode, text: ARROW_MODE_TEXT[mode] })),
@@ -114,15 +135,27 @@ let state: State = {
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
   ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
   taskbar: { enabled: true, offset: null },
-  health: { status: 'ok', reasons: [] },
+  health: { status: 'ok', reasons: [], marketClosed: false, closedReason: '' },
+  trend: null,
+  trendSettings: { enabled: true, range: 'day' },
+  trendRanges: [
+    { range: '1h', text: '1 小时' },
+    { range: '12h', text: '半天' },
+    { range: 'day', text: '全天' },
+  ],
 };
 
 /** 下拉框选项与滑杆区间都来自 core，面板不自己写死 */
-function buildUiModels(): Pick<State, 'arrowMode' | 'arrowModes' | 'ballScale'> {
+function buildUiModels(): Pick<
+  State,
+  'arrowMode' | 'arrowModes' | 'ballScale' | 'trendSettings' | 'trendRanges'
+> {
   return {
     arrowMode: arrowModeOf(settings.display),
     arrowModes: ARROW_MODE_ORDER.map((mode) => ({ mode, text: ARROW_MODE_TEXT[mode] })),
     ballScale: { min: BALL_SCALE_MIN, max: BALL_SCALE_MAX },
+    trendSettings: settings.trend,
+    trendRanges: TREND_RANGE_ORDER.map((range) => ({ range, text: TREND_RANGE_TEXT[range] })),
   };
 }
 
@@ -172,21 +205,25 @@ function saveRules(): void {
 interface Settings {
   primarySymbol: string;
   pollSeconds: number;
+  launchAtLogin: boolean;
   display: DisplayToggles;
   symbolOrder: string[];
   bark: { enabled: boolean; server: string; deviceKey: string };
   ball: { enabled: boolean; opacity: number; scale: number; x: number | null; y: number | null };
   taskbar: { enabled: boolean; offset: number | null };
+  trend: TrendSettings;
 }
 
 const DEFAULT_SETTINGS: Settings = {
   primarySymbol: 'ZS',
   pollSeconds: 30,
+  launchAtLogin: false,
   display: DEFAULT_DISPLAY,
   symbolOrder: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
   ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
   taskbar: { enabled: true, offset: null },
+  trend: DEFAULT_TREND_SETTINGS,
 };
 
 let settings: Settings = {
@@ -196,6 +233,7 @@ let settings: Settings = {
   bark: { ...DEFAULT_SETTINGS.bark },
   ball: { ...DEFAULT_SETTINGS.ball },
   taskbar: { ...DEFAULT_SETTINGS.taskbar },
+  trend: { ...DEFAULT_TREND_SETTINGS },
 };
 
 /** deviceKey 明文落在 userData/settings.json（不在仓库里），面板输入框用 password 遮罩 */
@@ -208,6 +246,7 @@ function loadSettings(): Settings {
     return {
       primarySymbol: String(raw.primarySymbol ?? DEFAULT_SETTINGS.primarySymbol),
       pollSeconds: ALLOWED_INTERVALS.includes(seconds) ? seconds : DEFAULT_SETTINGS.pollSeconds,
+      launchAtLogin: raw.launchAtLogin === true,
       display: normalizeDisplay(raw.display),
       symbolOrder: normalizeSymbolOrder(raw.symbolOrder),
       bark: { ...DEFAULT_SETTINGS.bark, ...(raw.bark ?? {}) },
@@ -222,6 +261,7 @@ function loadSettings(): Settings {
         enabled: raw.taskbar?.enabled !== false,
         offset: point(raw.taskbar?.offset),
       },
+      trend: normalizeTrendSettings(raw.trend),
     };
   } catch {
     return {
@@ -230,6 +270,7 @@ function loadSettings(): Settings {
       bark: { ...DEFAULT_SETTINGS.bark },
       ball: { ...DEFAULT_SETTINGS.ball },
       taskbar: { ...DEFAULT_SETTINGS.taskbar },
+      trend: { ...DEFAULT_TREND_SETTINGS },
     };
   }
 }
@@ -364,15 +405,23 @@ function positionPanel(source: PanelAnchor): void {
 
 function pushState(): void {
   const quotes = applySymbolOrder(state.quotes, settings.symbolOrder);
+  const marketClosed = state.health.status === 'ok' && state.health.marketClosed;
   state = {
     ...state,
     quotes,
     ...buildCells(quotes),
     ...buildRuleModels(),
     ...buildUiModels(),
+    trend: settings.trend.enabled
+      ? store.trend(settings.primarySymbol, Date.now(), {
+          preferPreviousDay: marketClosed,
+          range: settings.trend.range,
+        })
+      : null,
     rules,
     primarySymbol: settings.primarySymbol,
     pollSeconds: settings.pollSeconds,
+    effectivePollSeconds: effectiveSeconds,
     display: settings.display,
     symbolOrder: settings.symbolOrder,
     bark: settings.bark,
@@ -524,6 +573,31 @@ const TASKBAR_MAX_SIZE = 400;
 let taskbarWin: BrowserWindow | null = null;
 let taskbarContent = { width: TASKBAR_DEFAULT_WIDTH, height: 22 };
 let taskbarEdge: string | null = null;
+let stopFullscreenWatch: (() => void) | null = null;
+let fullscreenMonitors: Rect[] = [];
+
+/** 全屏视频/游戏时任务栏被盖住，workArea 却还保留任务栏的保留区；只能枚举前台窗口问系统 */
+function syncFullscreenWatch(): void {
+  if (!supportsTaskbar()) return;
+  if (!settings.taskbar.enabled) {
+    stopFullscreenWatch?.();
+    stopFullscreenWatch = null;
+    fullscreenMonitors = [];
+    return;
+  }
+  if (stopFullscreenWatch) return;
+  const watch = watchFullscreen((rects) => {
+    fullscreenMonitors = rects;
+    console.log(`[fullscreen] ${rects.length ? `全屏覆盖 ${rects.length} 块显示器` : '全屏结束'}`);
+    layoutTaskbar();
+  });
+  stopFullscreenWatch = () => watch.stop();
+}
+
+app.on('will-quit', () => {
+  stopFullscreenWatch?.();
+  stopFullscreenWatch = null;
+});
 
 /** TrafficMonitor 式贴附：Electron 嵌不进 Shell_TrayWnd，就用置顶透明窗口盖在任务栏上 */
 function supportsTaskbar(): boolean {
@@ -551,6 +625,10 @@ function layoutTaskbar(): void {
   const info = taskbarInfo();
   if (!info) {
     // 任务栏自动隐藏时贴附窗口会悬在半空，跟着藏起来；每轮轮询会再试
+    if (win.isVisible()) win.hide();
+    return;
+  }
+  if (fullscreenMonitors.some((monitor) => coversTaskbar(monitor, info.rect))) {
     if (win.isVisible()) win.hide();
     return;
   }
@@ -618,6 +696,7 @@ function setTaskbarVisible(visible: boolean): void {
   if (!supportsTaskbar()) return;
   settings.taskbar.enabled = visible;
   saveSettings();
+  syncFullscreenWatch();
   if (visible) {
     if (!taskbarWin || taskbarWin.isDestroyed()) taskbarWin = createTaskbar();
     layoutTaskbar();
@@ -657,37 +736,80 @@ async function dispatch(alerts: FiredAlert[]): Promise<void> {
   }
 }
 
-async function poll(): Promise<void> {
-  const result = await pollOnce(sources, store, rules);
-  const quotes = applySymbolOrder(result.quotes, settings.symbolOrder);
-  state = {
-    quotes,
-    ...buildCells(quotes),
-    ...buildRuleModels(),
-    ...buildUiModels(),
-    rules,
-    errors: result.errors,
-    lastPollAt: Date.now(),
-    primarySymbol: settings.primarySymbol,
-    pollSeconds: settings.pollSeconds,
-    display: settings.display,
-    symbolOrder: settings.symbolOrder,
-    bark: settings.bark,
-    ball: settings.ball,
-    taskbar: settings.taskbar,
-    health: result.health,
-  };
-  updateTrayTitle();
-  layoutTaskbar();
-  pushState();
-  if (result.alerts.length) await dispatch(result.alerts);
+let pollTimer: ReturnType<typeof setTimeout> | undefined;
+let polling = false;
+let effectiveSeconds = 30;
+let launchAtLogin = false;
+
+/** 未打包时注册进系统的是 Electron 本体而不是 GoldSentry，开发态不提供这个开关 */
+function supportsLoginItem(): boolean {
+  return app.isPackaged && (process.platform === 'win32' || process.platform === 'darwin');
 }
 
-let pollTimer: ReturnType<typeof setInterval> | undefined;
+function syncLoginItem(): void {
+  if (!supportsLoginItem()) {
+    launchAtLogin = false;
+    return;
+  }
+  // portable 每次运行都解压到新的临时目录，注册 execPath 下次就指向不存在的地方；
+  // electron-builder 会把原始 portable exe 路径放进这个环境变量
+  const path = process.platform === 'win32' ? process.env.PORTABLE_EXECUTABLE_FILE || process.execPath : undefined;
+  app.setLoginItemSettings(path ? { openAtLogin: settings.launchAtLogin, path } : { openAtLogin: settings.launchAtLogin });
+  // 回读系统真实值：用户可能在任务管理器/系统设置里自己关掉了
+  launchAtLogin = app.getLoginItemSettings(path ? { path } : {}).openAtLogin;
+}
+
+function scheduleNext(): void {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(() => void poll(), effectiveSeconds * 1000);
+}
+
+async function poll(): Promise<void> {
+  // 手动刷新可能撞上定时器；撞上了就丢掉这次，否则会并行出两条 setTimeout 链
+  if (polling) return;
+  polling = true;
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = undefined;
+  }
+  try {
+    const result = await pollOnce(sources, store, rules);
+    const quotes = applySymbolOrder(result.quotes, settings.symbolOrder);
+    effectiveSeconds = backoffSeconds(settings.pollSeconds, result.failureStreak);
+    state = {
+      quotes,
+      ...buildCells(quotes),
+      ...buildRuleModels(),
+      ...buildUiModels(),
+      rules,
+      errors: result.errors,
+      lastPollAt: Date.now(),
+      primarySymbol: settings.primarySymbol,
+      pollSeconds: settings.pollSeconds,
+      effectivePollSeconds: effectiveSeconds,
+      failureStreak: result.failureStreak,
+      launchAtLogin,
+      display: settings.display,
+      symbolOrder: settings.symbolOrder,
+      bark: settings.bark,
+      ball: settings.ball,
+      taskbar: settings.taskbar,
+      health: result.health,
+      trend: state.trend,
+    };
+    updateTrayTitle();
+    layoutTaskbar();
+    pushState();
+    if (result.alerts.length) await dispatch(result.alerts);
+  } finally {
+    polling = false;
+    scheduleNext();
+  }
+}
 
 function restartTimer(): void {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(() => void poll(), settings.pollSeconds * 1000);
+  effectiveSeconds = settings.pollSeconds;
+  scheduleNext();
 }
 
 /** 主显品种优先；取不到就退到最新的一条实时价，避免显示滞后的日定价 */
@@ -716,9 +838,11 @@ function updateTrayTitle(): void {
           : ''
       }`
     : 'GoldSentry 等待首次取数';
-  tray.setToolTip(
-    state.health.reasons.length ? `${priceLine}\n数据源异常：${state.health.reasons.join('；')}` : priceLine,
-  );
+  // 休市与故障分开说：故障优先，正常休市只解释报价为什么不动
+  const lines = [priceLine];
+  if (state.health.reasons.length) lines.push(`数据源异常：${state.health.reasons.join('；')}`);
+  else if (state.health.marketClosed) lines.push(`休市：${state.health.closedReason}`);
+  tray.setToolTip(lines.join('\n'));
   if (changed) console.log(`[tray] title="${title}" ${Notification.isSupported() ? '通知可用' : '通知不可用'}`);
 }
 
@@ -783,6 +907,7 @@ if (!app.requestSingleInstanceLock()) {
     screen.on('display-added', relayout);
 
     powerMonitor.on('resume', () => void poll());
+    syncLoginItem();
     void poll();
     restartTimer();
     if (settings.ball.enabled) setBallVisible(true);
@@ -792,7 +917,11 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 ipcMain.handle('gold:state', () => state);
-ipcMain.handle('gold:refresh', () => poll());
+// 面板 .then(applyState)，返回 void 会让渲染层拿到 undefined 后抛异常
+ipcMain.handle('gold:refresh', async () => {
+  await poll();
+  return state;
+});
 ipcMain.handle('gold:save-rules', (_event, rows: unknown) => {
   rules = compileRules(rows);
   saveRules();
@@ -822,7 +951,19 @@ ipcMain.handle('gold:bark-test', () => sendBark(barkConfig(), {
   title: 'GoldSentry 推送通道测试',
   body: '收到说明 Bark 已打通',
 }));
-ipcMain.handle('gold:capabilities', () => ({ ball: supportsBall(), taskbar: supportsTaskbar() }));
+ipcMain.handle('gold:capabilities', () => ({
+  ball: supportsBall(),
+  taskbar: supportsTaskbar(),
+  loginItem: supportsLoginItem(),
+}));
+ipcMain.handle('gold:set-launch-at-login', (_event, enabled: unknown) => {
+  settings.launchAtLogin = enabled === true;
+  saveSettings();
+  syncLoginItem();
+  state = { ...state, launchAtLogin };
+  pushState();
+  return state;
+});
 ipcMain.handle('gold:set-ball', (_event, next: { enabled?: boolean; opacity?: number; scale?: number }) => {
   // 先缩放再决定显隐：新建球时 createBall 要按新尺寸落位
   if (next.scale !== undefined) applyBallScale(next.scale);
@@ -852,6 +993,15 @@ ipcMain.handle('gold:set-display', (_event, next: { name?: boolean; mode?: Arrow
   pushTaskbar();
   pushState();
   return { display: settings.display, arrowMode: arrowModeOf(settings.display) };
+});
+ipcMain.handle('gold:set-trend', (_event, next: { enabled?: boolean; range?: TrendRange }) => {
+  const patched = { ...settings.trend };
+  if (typeof next?.enabled === 'boolean') patched.enabled = next.enabled;
+  if (next?.range !== undefined) patched.range = next.range;
+  settings.trend = normalizeTrendSettings(patched);
+  saveSettings();
+  pushState();
+  return state;
 });
 ipcMain.on('gold:quit', () => app.quit());
 ipcMain.on('gold:notify-test', () => sendTestNotification());

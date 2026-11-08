@@ -1,4 +1,5 @@
-import { feeOf, feeShortText } from './fees.ts';
+import { feeCell } from './fees.ts';
+import { marketSessionAt } from './market.ts';
 
 /** 金额一律两位小数；缺失或非有限值显示 —，不编数字 */
 export function formatPrice(value: number | undefined): string {
@@ -17,19 +18,44 @@ export interface QuoteCells {
   sell: string;
   pct: string;
   tone: PriceTone;
+  update: string;
+  /** 只有开市期间的陈旧才标黄；休市时报价不动是预期行为 */
+  updateStale: boolean;
 }
 
-export function formatQuoteCells(quote: {
-  buyPrice?: number;
-  sellPrice?: number;
-  dayChangePct?: number;
-}): QuoteCells {
+/** 「更新」列的文案；休市与否由 marketSessionAt 判定，外壳不自己算 */
+export function updateAgeText(quotedAt: number | undefined, basis: string | undefined, now = Date.now()): string {
+  if (typeof quotedAt !== 'number' || !Number.isFinite(quotedAt)) return '未知';
+  const minutes = Math.max(0, Math.round((now - quotedAt) / 60000));
+  if (basis === 'dailyFix') return minutes >= 60 ? `${Math.round(minutes / 60)} 小时前` : '今日已定价';
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes} 分钟前`;
+  return `${Math.round(minutes / 60)} 小时前`;
+}
+
+export function formatQuoteCells(
+  quote: {
+    buyPrice?: number;
+    sellPrice?: number;
+    dayChangePct?: number;
+    quotedAt?: number;
+    basis?: string;
+  },
+  now = Date.now(),
+): QuoteCells {
   const pct = quote.dayChangePct;
+  const stale =
+    marketSessionAt(now).open &&
+    quote.basis === 'realtime' &&
+    typeof quote.quotedAt === 'number' &&
+    now - quote.quotedAt > 30 * 60000;
   return {
     buy: formatPrice(quote.buyPrice),
     sell: formatPrice(quote.sellPrice),
     pct: formatPct(pct),
     tone: priceTone(pct),
+    update: updateAgeText(quote.quotedAt, quote.basis, now),
+    updateStale: stale,
   };
 }
 
@@ -38,20 +64,25 @@ export interface SpreadCell {
   text: string;
   basis: 'spread' | 'fee';
   note: string;
+  /** 退回费率口径且核实日期已过期，面板据此标黄 */
+  stale: boolean;
 }
 
 /**
  * 买入卖一等同时点差是 0，这种没有成本信息，退回服务费口径；
  * 两边都给不出数字时显示 —，不编。
  */
-export function spreadCell(spread: number | undefined, symbol: string): SpreadCell {
-  const fee = feeOf(symbol);
-  const feeNote = fee ? `${fee.note}（截至 ${fee.asOf}）` : '费率未知';
+export function spreadCell(spread: number | undefined, symbol: string, now = Date.now()): SpreadCell {
   if (typeof spread === 'number' && Number.isFinite(spread) && spread > 0) {
-    return { text: formatPrice(spread), basis: 'spread', note: `点差 ${formatPrice(spread)} 元/克（买入减卖出）` };
+    return {
+      text: formatPrice(spread),
+      basis: 'spread',
+      note: `点差 ${formatPrice(spread)} 元/克（买入减卖出）`,
+      stale: false,
+    };
   }
-  const short = feeShortText(symbol);
-  return { text: short === '—' ? '—' : short, basis: 'fee', note: feeNote };
+  const fee = feeCell(symbol, now);
+  return { text: fee.text, basis: 'fee', note: fee.note, stale: fee.stale };
 }
 
 /** 悬浮球透明度下限：再低就找不到球了 */

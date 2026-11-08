@@ -9,11 +9,16 @@ import {
   clampBallScale,
   clampIntoWorkArea,
   clampOpacity,
+  coversTaskbar,
   DEFAULT_DISPLAY,
   detectTaskbar,
   displayFromArrowMode,
+  FEE_STALE_DAYS,
+  feeAgeDays,
+  feeCell,
   formatPct,
   formatQuoteCells,
+  marketSessionAt,
   normalizeDisplay,
   normalizeSymbolOrder,
   priceTone,
@@ -25,6 +30,13 @@ import {
   OPACITY_MIN,
   placeOnTaskbar,
   TASKBAR_END_MARGIN,
+  beijingDateKey,
+  beijingDayStart,
+  dayTrendSeries,
+  normalizeTrendSettings,
+  TREND_GAP_MS,
+  TREND_RANGE_ORDER,
+  updateAgeText,
 } from '../packages/core/src/index.ts';
 
 let failures = 0;
@@ -206,6 +218,25 @@ check('未知时 tooltip 仍解释原因', unknown.note.includes('以银行 App 
 check('点差缺失也退回服务费', spreadCell(undefined, 'ZS').text === '0%/0.4%');
 check('点差为负（脏数据）不显示成点差', spreadCell(-1, 'ZS').basis === 'fee');
 
+// --- 费率过期：人工核实值放久了要提示重新核对 ---
+const AS_OF = Date.parse('2026-11-05');
+const DAY = 86_400_000;
+const beforeDeadline = AS_OF + (FEE_STALE_DAYS - 1) * DAY;
+const atDeadline = AS_OF + FEE_STALE_DAYS * DAY;
+const overdue = AS_OF + (FEE_STALE_DAYS + 1) * DAY;
+check('核实天数按自然日算', feeAgeDays('2026-11-05', AS_OF + 3 * DAY) === 3);
+check('脏日期不编天数', feeAgeDays('不是日期', AS_OF) === undefined);
+check('未来日期不倒着算', feeAgeDays('2026-11-05', AS_OF - DAY) === 0);
+check('阈值内不标过期', feeCell('ZS', beforeDeadline).stale === false && feeCell('ZS', beforeDeadline).text === '0%/0.4%');
+check('恰好到阈值当天还不算过期', feeCell('ZS', atDeadline).stale === false);
+check('超过阈值标过期并带 ⚠', feeCell('ZS', overdue).stale === true && feeCell('ZS', overdue).text === '0%/0.4% ⚠');
+check('过期说明写清天数与去处', feeCell('ZS', overdue).note.includes(`${FEE_STALE_DAYS + 1} 天`) && feeCell('ZS', overdue).note.includes('银行 App'));
+check('本来就查不到数字的不标黄（避免噪音）', feeCell('MS', overdue).stale === false && feeCell('MS', overdue).text === '—');
+check('未收录的品种不标黄', feeCell('NOPE', overdue).stale === false);
+check('点差口径不受费率过期影响', spreadCell(3.5, 'ZS', overdue).stale === false && spreadCell(3.5, 'ZS', overdue).basis === 'spread');
+check('退回费率口径时把过期透传给面板', spreadCell(0, 'ZS', overdue).stale === true);
+check('当前收录的费率都还在有效期内', spreadCell(0, 'ZS').stale === false && spreadCell(0, 'NJ').stale === false);
+
 // --- 品种顺序：面板拖出来的顺序 ---
 check('脏顺序被清理', JSON.stringify(normalizeSymbolOrder(['ZS', 'ZS', 1, '', 'GS'])) === JSON.stringify(['ZS', 'GS']));
 check('非数组退回空', JSON.stringify(normalizeSymbolOrder(undefined)) === JSON.stringify([]) && normalizeSymbolOrder('ZS').length === 0);
@@ -262,6 +293,154 @@ check(
   '缩小后仍夹得回工作区',
   clampIntoWorkArea({ x: shrunk.x, y: shrunk.y, width: shrunk.size, height: shrunk.size }, { x: 0, y: 0, width: 30, height: 30 }).x === 0,
   JSON.stringify(shrunk),
+);
+
+// --- 交易时段：连续盘 09:00 → 次日 02:30，周末/节假日休市 ---
+const at = (iso: string) => Date.parse(iso);
+const session = (iso: string) => marketSessionAt(at(iso));
+check('周日中午休市', session('2026-11-08T04:00:00Z').open === false, session('2026-11-08T04:00:00Z').reason);
+check('周日休市原因写周末', session('2026-11-08T04:00:00Z').reason === '周末休市');
+check('周六凌晨 01:00 仍属周五夜盘，开市', session('2026-11-06T17:00:00Z').open === true, session('2026-11-06T17:00:00Z').reason);
+check('周六 03:00 已收盘', session('2026-11-06T19:00:00Z').open === false && session('2026-11-06T19:00:00Z').reason === '周末休市');
+check('周一 08:00 开市前', session('2026-11-09T00:00:00Z').open === false && session('2026-11-09T00:00:00Z').reason.includes('09:00'));
+check('周一 09:00 准时开市', session('2026-11-09T01:00:00Z').open === true);
+check('周五 22:00 夜盘仍在', session('2026-11-06T14:00:00Z').open === true);
+check('工作日 15:40 日盘后仍有夜盘', session('2026-11-06T07:40:00Z').open === true);
+check('周五 02:29 属周四夜盘', session('2026-11-05T18:29:00Z').open === true);
+check('周五 02:30 夜里收盘', session('2026-11-05T18:30:00Z').open === false && session('2026-11-05T18:30:00Z').reason.includes('09:00'));
+check('国庆上午休市', session('2026-10-01T02:00:00Z').open === false && session('2026-10-01T02:00:00Z').reason === '国庆休市');
+check('节前最后交易日白天开市', session('2026-09-30T02:00:00Z').open === true);
+check('节前最后交易日晚上停夜盘', session('2026-09-30T13:00:00Z').open === false && session('2026-09-30T13:00:00Z').reason === '节前夜盘暂停');
+check('节日凌晨没有前一晚夜盘', session('2026-09-30T17:00:00Z').open === false && session('2026-09-30T17:00:00Z').reason === '节前夜盘暂停');
+check('节日最后一天凌晨仍休市', session('2026-10-07T17:00:00Z').open === false && session('2026-10-07T17:00:00Z').reason === '国庆休市');
+check('节后首日 09:00 恢复', session('2026-10-08T01:00:00Z').open === true);
+check('调休补班的周六照样休市', session('2026-10-10T02:00:00Z').open === false && session('2026-10-10T02:00:00Z').reason === '周末休市');
+
+// --- 更新列：休市时报价不动不标黄 ---
+const OPEN_NOW = at('2026-11-06T02:00:00Z');
+const quoteForAge = { buyPrice: 880, sellPrice: 879.5, quotedAt: OPEN_NOW - 40 * 60_000, basis: 'realtime' };
+check('开市期间 40 分钟未更新标黄', formatQuoteCells(quoteForAge, OPEN_NOW).updateStale === true);
+check('休市期间同样陈旧不标黄', formatQuoteCells(quoteForAge, at('2026-11-08T04:00:00Z')).updateStale === false);
+check('更新文案按分钟展示', formatQuoteCells(quoteForAge, OPEN_NOW).update === '40 分钟前', formatQuoteCells(quoteForAge, OPEN_NOW).update);
+check('刚取到的显示刚刚', updateAgeText(OPEN_NOW - 20_000, 'realtime', OPEN_NOW) === '刚刚');
+check('一小时内按分钟', updateAgeText(OPEN_NOW - 10 * 60_000, 'realtime', OPEN_NOW) === '10 分钟前');
+check('日定价当日显示已定价', updateAgeText(OPEN_NOW - 10 * 60_000, 'dailyFix', OPEN_NOW) === '今日已定价');
+check('日定价跨小时按小时', updateAgeText(OPEN_NOW - 3 * 3_600_000, 'dailyFix', OPEN_NOW) === '3 小时前');
+check('没有时间戳显示未知', updateAgeText(undefined, 'realtime', OPEN_NOW) === '未知');
+
+// --- 全屏遮挡：只有盖住任务栏那一块的全屏窗口才隐藏贴纸 ---
+const TB = { x: 0, y: 1032, width: 1920, height: 48 };
+check('主屏全屏盖住任务栏', coversTaskbar({ x: 0, y: 0, width: 1920, height: 1080 }, TB) === true);
+check('副屏全屏不影响主屏贴纸', coversTaskbar({ x: 1920, y: 0, width: 1536, height: 864 }, TB) === false);
+check('窗口只盖住半屏不算全屏', coversTaskbar({ x: 0, y: 0, width: 1920, height: 900 }, TB) === false);
+const LEFT_TB = { x: 0, y: 0, width: 48, height: 1080 };
+check('任务栏在左侧也能判断', coversTaskbar({ x: 0, y: 0, width: 1920, height: 1080 }, LEFT_TB) === true);
+const RIGHT_TB = { x: 1872, y: 0, width: 48, height: 1080 };
+check('任务栏在右侧也能判断', coversTaskbar({ x: 1920, y: 0, width: 1536, height: 864 }, RIGHT_TB) === false);
+
+// --- 分时序列：按日/按品种过滤、排序、断线、汇总与降采样 ---
+const TREND_NOW = at('2026-11-06T02:00:00Z'); // 周五 10:00 北京
+const TREND_TODAY = beijingDateKey(TREND_NOW);
+const trendSamples = [
+  { symbol: 'ZS', ts: TREND_NOW, buyPrice: 880 },
+  { symbol: 'ZS', ts: TREND_NOW - 60 * 60_000, buyPrice: 870 },
+  { symbol: 'ZS', ts: TREND_NOW - 59 * 60_000, buyPrice: 871 },
+  { symbol: 'MS', ts: TREND_NOW, buyPrice: 999 },
+  { symbol: 'ZS', ts: TREND_NOW - 24 * 60 * 60_000, buyPrice: 850 },
+  { symbol: 'ZS', ts: TREND_NOW - 24 * 60 * 60_000 - 60_000, buyPrice: 849 },
+];
+const trend = dayTrendSeries(trendSamples, 'ZS', TREND_NOW);
+check('分时只取当天与当前品种', trend.points.length === 3 && trend.day === TREND_TODAY && trend.isToday);
+check('分时点按时间升序', trend.points[0].ts === TREND_NOW - 60 * 60_000 && trend.points[2].ts === TREND_NOW);
+check('超过 30 分钟断线', trend.points[0].gap === false && trend.points[1].gap === false && trend.points[2].gap === true);
+check('分时开盘/最新/高低正确', trend.open === 870 && trend.last === 880 && trend.low === 870 && trend.high === 880);
+check('分时涨跌相对首笔', trend.changeText === '+1.15%' && trend.tone === 'up', trend.changeText);
+check('分时金额由 core 格式化', trend.lastText === '880.00' && trend.lowText === '870.00' && trend.highText === '880.00');
+check('分时横轴按北京时间自然日', trend.dayStart === TREND_NOW - 10 * 60 * 60_000 && trend.dayEnd - trend.dayStart === 86_400_000);
+const trendDup = dayTrendSeries(
+  [
+    { symbol: 'ZS', ts: TREND_NOW, buyPrice: 880 },
+    { symbol: 'ZS', ts: TREND_NOW, buyPrice: 881 },
+  ],
+  'ZS',
+  TREND_NOW,
+);
+check('同一时间戳保留最后一笔', trendDup.points.length === 1 && trendDup.points[0].price === 881);
+const trendMany = Array.from({ length: 600 }, (_, i) => ({ symbol: 'ZS', ts: TREND_NOW - (599 - i) * 1000, buyPrice: 870 + i }));
+const trendDown = dayTrendSeries(trendMany, 'ZS', TREND_NOW, { maxPoints: 50 });
+check('分时降采样到上限且保留首尾', trendDown.points.length === 50 && trendDown.points[0].ts === trendMany[0].ts && trendDown.points[49].ts === trendMany[599].ts);
+check('降采样不改汇总值', trendDown.high === 870 + 599 && trendDown.low === 870);
+const previousKey = beijingDateKey(TREND_NOW - 24 * 60 * 60_000);
+const trendPrev = dayTrendSeries(trendSamples, 'ZS', TREND_NOW, { preferPreviousDay: true });
+check('休市回退上一交易日', trendPrev.day === previousKey && trendPrev.isToday === false && trendPrev.points.length === 2, trendPrev.day);
+const trendDupDay = [
+  { symbol: 'ZS', ts: TREND_NOW - 24 * 60 * 60_000, buyPrice: 850 },
+  { symbol: 'ZS', ts: TREND_NOW - 24 * 60 * 60_000, buyPrice: 851 },
+  { symbol: 'ZS', ts: TREND_NOW - 48 * 60 * 60_000, buyPrice: 840 },
+  { symbol: 'ZS', ts: TREND_NOW - 48 * 60 * 60_000 + 60_000, buyPrice: 841 },
+];
+const trendSkipDup = dayTrendSeries(trendDupDay, 'ZS', TREND_NOW, { preferPreviousDay: true });
+check(
+  '回退跳过只有重复时间戳的日子',
+  trendSkipDup.day === beijingDateKey(TREND_NOW - 48 * 60 * 60_000) && trendSkipDup.points.length === 2,
+  trendSkipDup.day,
+);
+const trendEmpty = dayTrendSeries([], 'ZS', TREND_NOW);
+check('没有采样时图表为空', trendEmpty.points.length === 0 && trendEmpty.open === null && trendEmpty.changeText === '—' && trendEmpty.tone === 'flat');
+const trendBad = dayTrendSeries(
+  [
+    { symbol: 'ZS', ts: TREND_NOW, buyPrice: 0 },
+    { symbol: 'ZS', ts: TREND_NOW, buyPrice: Number.NaN },
+  ],
+  'ZS',
+  TREND_NOW,
+);
+check('无效价格不计入分时', trendBad.points.length === 0);
+check('断线阈值是 30 分钟', TREND_GAP_MS === 30 * 60_000);
+check('分时点自带北京时间，面板不用自己拼', trend.points[2].timeText === '10:00', trend.points[2].timeText);
+check('全天模式横轴固定 00/12/24', trend.axisLabels.join('|') === '00:00|12:00|24:00', trend.axisLabels.join('|'));
+
+// --- 分时图配置：显示开关、时间范围与窗口裁剪 ---
+check(
+  '分时配置缺省为显示 + 全天',
+  JSON.stringify(normalizeTrendSettings(undefined)) === JSON.stringify({ enabled: true, range: 'day' }),
+);
+check(
+  '分时配置保留合法值、丢弃脏值',
+  JSON.stringify(normalizeTrendSettings({ enabled: false, range: '1h' })) === JSON.stringify({ enabled: false, range: '1h' }),
+);
+check(
+  '分时配置脏 range 退回全天',
+  JSON.stringify(normalizeTrendSettings({ enabled: 'no', range: '2h' })) === JSON.stringify({ enabled: true, range: 'day' }),
+);
+check('时间范围只有三档', TREND_RANGE_ORDER.join('|') === '1h|12h|day', TREND_RANGE_ORDER.join('|'));
+
+const rangeSamples = [
+  { symbol: 'ZS', ts: TREND_NOW, buyPrice: 880 },
+  { symbol: 'ZS', ts: TREND_NOW - 30 * 60_000, buyPrice: 875 },
+  { symbol: 'ZS', ts: TREND_NOW - 90 * 60_000, buyPrice: 872 },
+  { symbol: 'ZS', ts: TREND_NOW - 5 * 60 * 60_000, buyPrice: 865 },
+];
+const trendHour = dayTrendSeries(rangeSamples, 'ZS', TREND_NOW, { range: '1h' });
+check('1 小时只留窗口内采样', trendHour.points.length === 2 && trendHour.points[0].price === 875, String(trendHour.points.length));
+check('1 小时窗口从当前时刻往回截', trendHour.windowEnd === TREND_NOW && trendHour.windowStart === TREND_NOW - 3_600_000);
+check('1 小时汇总只看窗口内', trendHour.open === 875 && trendHour.last === 880 && trendHour.low === 875 && trendHour.high === 880);
+check('1 小时涨跌相对窗口首笔', trendHour.changeText === '+0.57%' && trendHour.tone === 'up', trendHour.changeText);
+check('1 小时横轴按实际窗口', trendHour.axisLabels.join('|') === '09:00|09:30|10:00', trendHour.axisLabels.join('|'));
+check('1 小时标题带范围', trendHour.windowText === '今日 · 1 小时' && trendHour.rangeText === '1 小时', trendHour.windowText);
+
+const trendHalf = dayTrendSeries(rangeSamples, 'ZS', TREND_NOW, { range: '12h' });
+check('半天包含当天全部采样且不跨出自然日', trendHalf.points.length === 4 && trendHalf.windowStart === trendHalf.dayStart);
+check('半天横轴末端跟到当前时刻', trendHalf.axisLabels[2] === '10:00' && trendHalf.axisLabels[0] === '00:00', trendHalf.axisLabels.join('|'));
+
+const trendOld = dayTrendSeries([{ symbol: 'ZS', ts: TREND_NOW - 3 * 60 * 60_000, buyPrice: 860 }], 'ZS', TREND_NOW, { range: '1h' });
+check('窗口内没有采样时图表为空', trendOld.points.length === 0 && trendOld.open === null && trendOld.changeText === '—');
+
+const trendPrevHour = dayTrendSeries(trendSamples, 'ZS', TREND_NOW, { preferPreviousDay: true, range: '1h' });
+check(
+  '回退日按当天最后一笔截窗口',
+  trendPrevHour.isToday === false && trendPrevHour.windowEnd === TREND_NOW - 24 * 60 * 60_000 && trendPrevHour.points.length === 2,
+  `${trendPrevHour.day} ${trendPrevHour.points.length}`,
 );
 
 console.log(failures ? `\n${failures} 项未通过` : '\n全部通过');

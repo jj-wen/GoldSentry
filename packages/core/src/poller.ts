@@ -8,6 +8,8 @@ export interface PollResult {
   alerts: FiredAlert[];
   errors: string[];
   health: HealthReport;
+  /** 连续全部失效次数，外壳用 backoffSeconds 决定下一轮间隔 */
+  failureStreak: number;
 }
 
 function transitionAlert(from: HealthStatus, health: HealthReport): FiredAlert {
@@ -69,5 +71,5 @@ export async function pollOnce(
   if (previous !== undefined && health.status !== previous) alerts.push(transitionAlert(previous, health));
   store.setHealthStatus(health.status);
 
-  return { quotes, alerts, errors, health };
+  return { quotes, alerts, errors, health, failureStreak: store.failureStreak() };
 }
