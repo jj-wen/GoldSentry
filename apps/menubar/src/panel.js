@@ -26,6 +26,8 @@ const els = {
   ballScaleVal: document.getElementById('ball-scale-val'),
   taskbarRow: document.getElementById('taskbar-row'),
   taskbarOn: document.getElementById('taskbar-on'),
+  taskbarTrendRow: document.getElementById('taskbar-trend-row'),
+  taskbarTrendOn: document.getElementById('taskbar-trend-on'),
   tabDetail: document.getElementById('tab-detail'),
   tabSettings: document.getElementById('tab-settings'),
   viewDetail: document.getElementById('view-detail'),
@@ -303,6 +305,8 @@ function fillBall(ball) {
 function fillTaskbar(taskbar) {
   if (!taskbar) return;
   els.taskbarOn.checked = !!taskbar.enabled;
+  if (document.activeElement !== els.taskbarTrendOn) els.taskbarTrendOn.checked = !!taskbar.trend;
+  els.taskbarTrendOn.disabled = !taskbar.enabled;
 }
 
 function fillDisplay(display, arrowMode) {
@@ -322,7 +326,7 @@ function fillTrendSettings(settings, ranges) {
     els.trendRangeSelect.innerHTML = optionTags(ranges.map((r) => ({ value: r.range, text: r.text })), settings.range);
   }
   if (document.activeElement !== els.trendRangeSelect) els.trendRangeSelect.value = settings.range;
-  els.trendRangeSelect.disabled = !settings.enabled;
+  // 任务栏走势共用这个范围，面板图表关掉时也不能禁用
 }
 
 function applyState(next) {
@@ -373,7 +377,11 @@ els.ballOn.addEventListener('change', async () => {
   els.ballScaleVal.textContent = `${Math.round(saved.scale * 100)}%`;
 });
 
-els.taskbarOn.addEventListener('change', () => window.gold.setTaskbar({ enabled: els.taskbarOn.checked }));
+els.taskbarOn.addEventListener('change', () => window.gold.setTaskbar({ enabled: els.taskbarOn.checked }).then(applyState));
+
+els.taskbarTrendOn.addEventListener('change', () =>
+  window.gold.setTaskbar({ trend: els.taskbarTrendOn.checked }).then(applyState),
+);
 
 els.loginOn.addEventListener('change', () => window.gold.setLaunchAtLogin(els.loginOn.checked).then(applyState));
 
@@ -538,7 +546,10 @@ els.quit.addEventListener('click', () => window.gold.quit());
 window.gold.onUpdate(applyState);
 // 悬浮球与任务栏文字都是 Windows 专属，macOS 用菜单栏本身就有的文字位
 window.gold.getCapabilities().then(async (caps) => {
-  if (caps.taskbar) els.taskbarRow.hidden = false;
+  if (caps.taskbar) {
+    els.taskbarRow.hidden = false;
+    els.taskbarTrendRow.hidden = false;
+  }
   if (caps.loginItem) els.loginRow.hidden = false;
   if (!caps.ball) return;
   els.ballRow.hidden = false;

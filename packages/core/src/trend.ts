@@ -8,14 +8,28 @@ export interface TrendSampleLike {
 }
 
 /** 分时图可选的时间跨度；day 是自然日 00:00–24:00，其余从区间末端往回截 */
-export type TrendRange = '1h' | '12h' | 'day';
+export type TrendRange = '30m' | '1h' | '2h' | '4h' | '6h' | '12h' | 'day';
 
-export const TREND_RANGE_ORDER: TrendRange[] = ['1h', '12h', 'day'];
+export const TREND_RANGE_ORDER: TrendRange[] = ['30m', '1h', '2h', '4h', '6h', '12h', 'day'];
 
 export const TREND_RANGE_TEXT: Record<TrendRange, string> = {
+  '30m': '30 分钟',
   '1h': '1 小时',
+  '2h': '2 小时',
+  '4h': '4 小时',
+  '6h': '6 小时',
   '12h': '半天',
   day: '全天',
+};
+
+const TREND_RANGE_MS: Record<TrendRange, number> = {
+  '30m': 30 * 60_000,
+  '1h': 60 * 60_000,
+  '2h': 2 * 60 * 60_000,
+  '4h': 4 * 60 * 60_000,
+  '6h': 6 * 60 * 60_000,
+  '12h': 12 * 60 * 60_000,
+  day: 86_400_000,
 };
 
 export const DEFAULT_TREND_SETTINGS: TrendSettings = { enabled: true, range: 'day' };
@@ -26,7 +40,7 @@ export interface TrendSettings {
 }
 
 export function normalizeTrendRange(raw: unknown): TrendRange {
-  return raw === '1h' || raw === '12h' || raw === 'day' ? raw : DEFAULT_TREND_SETTINGS.range;
+  return typeof raw === 'string' && raw in TREND_RANGE_TEXT ? (raw as TrendRange) : DEFAULT_TREND_SETTINGS.range;
 }
 
 export function normalizeTrendSettings(raw: unknown): TrendSettings {
@@ -160,7 +174,7 @@ export function dayTrendSeries(
     const anchor = isToday ? now : (lastTs ?? dayEnd);
     windowEnd = Math.min(Math.max(anchor, dayStart), dayEnd);
   }
-  const span = range === '1h' ? 3_600_000 : range === '12h' ? 43_200_000 : 86_400_000;
+  const span = TREND_RANGE_MS[range];
   const windowStart = range === 'day' ? dayStart : Math.max(dayStart, windowEnd - span);
 
   const inWindow = unique.filter((sample) => sample.ts >= windowStart && sample.ts <= windowEnd);
@@ -212,5 +226,40 @@ export function dayTrendSeries(
     highText: formatPrice(high ?? undefined),
     changeText: formatPct(changePct ?? undefined),
     tone: priceTone(changePct ?? undefined),
+  };
+}
+
+export interface SparkPoint {
+  /** 0–1，按分时窗口的时间比例 */
+  x: number;
+  /** 0–1，0 在顶部；外壳只按自己的像素尺寸缩放 */
+  y: number;
+  gap: boolean;
+}
+
+export interface TrendSparkline {
+  points: SparkPoint[];
+  tone: PriceTone;
+  rangeText: string;
+  changeText: string;
+}
+
+/** 任务栏迷你走势：把分时序列归一化成 0–1 坐标，避免各外壳自己算几何 */
+export function trendSparkline(series: TrendSeries): TrendSparkline | null {
+  if (series.points.length < 2) return null;
+  const span = (series.high ?? 0) - (series.low ?? 0);
+  const pad = span > 0 ? span * 0.12 : Math.max((series.high ?? 0) * 0.0004, 0.01);
+  const min = (series.low ?? 0) - pad;
+  const max = (series.high ?? 0) + pad;
+  const width = series.windowEnd - series.windowStart || 1;
+  return {
+    points: series.points.map((point) => ({
+      x: Math.min(1, Math.max(0, (point.ts - series.windowStart) / width)),
+      y: Math.min(1, Math.max(0, 1 - (point.price - min) / (max - min))),
+      gap: point.gap,
+    })),
+    tone: series.tone,
+    rangeText: series.rangeText,
+    changeText: series.changeText,
   };
 }

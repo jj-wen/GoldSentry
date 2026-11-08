@@ -76,6 +76,7 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 | 周末/节假日面板报「部分异常 / 全部报价陈旧」 | 陈旧判定不看交易时段，银行休市时报价当然不动 | 陈旧循环只在 `marketSessionAt(now).open` 时执行；节假日表每年按上金所公告更新 `core/market.ts`，并同步 `MARKET_SCHEDULE_AS_OF` |
 | 新增第二个状态栏项后 `verify:vscode` 报假失败 | 桩里 `createStatusBarItem` 每次返回同一个对象，后一项覆盖前一项的 `command` | 桩改成注册表（数组），按创建顺序分别断言；断言前要先取 `statusItems[0]` |
 | 设了 `hidden` 的行/块仍然显示（DOM 里 `.hidden === true`） | 作者样式 `.ball-row { display:flex }` 优先级高于 UA 的 `[hidden] { display:none }` | 全局补 `[hidden] { display:none !important }`；自动化断言要用 `getComputedStyle(...).display`，只查 `.hidden` 会假通过，截图才看得见 |
+| SVG 元素的 `hidden` 不生效：要么一直不显示，要么关了仍占宽度 | `SVGElement` 没有 `hidden` 这个 IDL 属性，赋值只挂扩展属性、不动内容属性；UA 的 `[hidden]` 规则也管不到 SVG | 用 `el.toggleAttribute('hidden', ...)` 改内容属性，并在样式里显式写 `.spark[hidden] { display:none }` |
 | 暂停轮询后再恢复，永远不再刷新 | 暂停时 `clearInterval` 清掉了定时器，恢复只刷新一次却没重建 | 用每轮重排的 `setTimeout` 链，暂停只跳过取数、链保持活着；改轮询节奏时顺带检查 dispose/deactivate 清的是 `clearTimeout` |
 
 ## 新增一家银行/一个数据源

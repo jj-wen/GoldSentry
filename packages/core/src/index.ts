@@ -12,12 +12,15 @@ export {
   TREND_MAX_POINTS,
   TREND_RANGE_ORDER,
   TREND_RANGE_TEXT,
+  trendSparkline,
+  type SparkPoint,
   type TrendOptions,
   type TrendPoint,
   type TrendRange,
   type TrendSampleLike,
   type TrendSeries,
   type TrendSettings,
+  type TrendSparkline,
 } from './trend.ts';
 export {
   compileRules,

@@ -45,6 +45,7 @@ import {
   TASKBAR_END_MARGIN,
   TREND_RANGE_ORDER,
   TREND_RANGE_TEXT,
+  trendSparkline,
   type AlertRule,
   type ArrowMode,
   type BarkConfig,
@@ -60,6 +61,7 @@ import {
   type TrendRange,
   type TrendSeries,
   type TrendSettings,
+  type TrendSparkline,
 } from '@goldsentry/core';
 import { watchFullscreen } from './fullscreen.ts';
 
@@ -109,6 +111,8 @@ interface State {
   health: HealthReport;
   /** 主显品种的分时序列；关闭分时图或首轮取数前为 null */
   trend: TrendSeries | null;
+  /** 任务栏迷你走势；面板关闭分时图时仍可单独显示 */
+  spark: TrendSparkline | null;
   trendSettings: TrendSettings;
   trendRanges: Array<{ range: TrendRange; text: string }>;
 }
@@ -134,9 +138,10 @@ let state: State = {
   ruleRows: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
   ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
-  taskbar: { enabled: true, offset: null },
+  taskbar: { enabled: true, offset: null, trend: false },
   health: { status: 'ok', reasons: [], marketClosed: false, closedReason: '' },
   trend: null,
+  spark: null,
   trendSettings: { enabled: true, range: 'day' },
   trendRanges: [
     { range: '1h', text: '1 小时' },
@@ -210,7 +215,7 @@ interface Settings {
   symbolOrder: string[];
   bark: { enabled: boolean; server: string; deviceKey: string };
   ball: { enabled: boolean; opacity: number; scale: number; x: number | null; y: number | null };
-  taskbar: { enabled: boolean; offset: number | null };
+  taskbar: { enabled: boolean; offset: number | null; trend: boolean };
   trend: TrendSettings;
 }
 
@@ -222,7 +227,7 @@ const DEFAULT_SETTINGS: Settings = {
   symbolOrder: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
   ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
-  taskbar: { enabled: true, offset: null },
+  taskbar: { enabled: true, offset: null, trend: false },
   trend: DEFAULT_TREND_SETTINGS,
 };
 
@@ -260,6 +265,7 @@ function loadSettings(): Settings {
       taskbar: {
         enabled: raw.taskbar?.enabled !== false,
         offset: point(raw.taskbar?.offset),
+        trend: raw.taskbar?.trend === true,
       },
       trend: normalizeTrendSettings(raw.trend),
     };
@@ -406,18 +412,22 @@ function positionPanel(source: PanelAnchor): void {
 function pushState(): void {
   const quotes = applySymbolOrder(state.quotes, settings.symbolOrder);
   const marketClosed = state.health.status === 'ok' && state.health.marketClosed;
+  const wantSeries = settings.trend.enabled || (supportsTaskbar() && settings.taskbar.trend);
+  const series = wantSeries
+    ? store.trend(settings.primarySymbol, Date.now(), {
+        preferPreviousDay: marketClosed,
+        range: settings.trend.range,
+      })
+    : null;
   state = {
     ...state,
     quotes,
     ...buildCells(quotes),
     ...buildRuleModels(),
     ...buildUiModels(),
-    trend: settings.trend.enabled
-      ? store.trend(settings.primarySymbol, Date.now(), {
-          preferPreviousDay: marketClosed,
-          range: settings.trend.range,
-        })
-      : null,
+    trend: settings.trend.enabled ? series : null,
+    // 面板图表关闭时任务栏仍可单独显示走势
+    spark: supportsTaskbar() && settings.taskbar.trend && series ? trendSparkline(series) : null,
     rules,
     primarySymbol: settings.primarySymbol,
     pollSeconds: settings.pollSeconds,
@@ -716,7 +726,8 @@ function saveTaskbarOffset(): void {
 
 function pushTaskbar(): void {
   if (!taskbarWin || taskbarWin.isDestroyed() || !taskbarWin.isVisible()) return;
-  taskbarWin.webContents.send('taskbar:update', readout());
+  // 走势只给任务栏，悬浮球保持原来的文字信息
+  taskbarWin.webContents.send('taskbar:update', { ...readout(), spark: state.spark });
 }
 
 function notifyNative(alerts: FiredAlert[]): void {
@@ -796,6 +807,7 @@ async function poll(): Promise<void> {
       taskbar: settings.taskbar,
       health: result.health,
       trend: state.trend,
+      spark: state.spark,
     };
     updateTrayTitle();
     layoutTaskbar();
@@ -971,9 +983,14 @@ ipcMain.handle('gold:set-ball', (_event, next: { enabled?: boolean; opacity?: nu
   if (typeof next.enabled === 'boolean') setBallVisible(next.enabled);
   return { ...settings.ball, supported: supportsBall() };
 });
-ipcMain.handle('gold:set-taskbar', (_event, next: { enabled?: boolean }) => {
+ipcMain.handle('gold:set-taskbar', (_event, next: { enabled?: boolean; trend?: boolean }) => {
   if (typeof next?.enabled === 'boolean') setTaskbarVisible(next.enabled);
-  return { ...settings.taskbar, supported: supportsTaskbar() };
+  if (typeof next?.trend === 'boolean') {
+    settings.taskbar.trend = next.trend;
+    saveSettings();
+  }
+  pushState();
+  return state;
 });
 /** 面板长按拖拽出来的品种顺序；只影响面板列表，球与任务栏文字仍只看主显品种 */
 ipcMain.handle('gold:set-order', (_event, symbols: unknown) => {

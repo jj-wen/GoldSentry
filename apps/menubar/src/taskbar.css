@@ -61,3 +61,36 @@ body[data-vertical='true'] #strip {
 .arrow {
   font-size: 10px;
 }
+
+/* 任务栏迷你走势：加在文字右侧，颜色跟随所选区间的涨跌 */
+.spark {
+  width: 42px;
+  height: 12px;
+  align-self: center;
+  overflow: visible;
+}
+
+/* SVG 不是 HTMLElement，UA 的 [hidden] 规则管不到它，必须自己写 */
+.spark[hidden] {
+  display: none;
+}
+
+/* 竖排任务栏只有一条窄边，塞不下折线 */
+body[data-vertical='true'] .spark {
+  display: none;
+}
+
+.spark polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.spark.up { color: #ff6b6b; }
+
+.spark.down { color: #4ade80; }
+
+.spark.flat { color: #c9c9cf; }

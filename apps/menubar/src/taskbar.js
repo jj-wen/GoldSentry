@@ -3,8 +3,53 @@ const markEl = document.getElementById('mark');
 const symEl = document.getElementById('sym');
 const priceEl = document.getElementById('price');
 const arrowEl = document.getElementById('arrow');
+const sparkEl = document.getElementById('spark');
 
 let lastSignature = '';
+
+const SPARK_W = 42;
+const SPARK_H = 12;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function sparkNode(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  return node;
+}
+
+function renderSpark(spark) {
+  sparkEl.replaceChildren();
+  const points = spark?.points ?? [];
+  // SVG 元素没有 hidden 这个 IDL 属性，赋值只会挂成扩展属性，必须改内容属性
+  sparkEl.toggleAttribute('hidden', points.length < 2);
+  sparkEl.classList.remove('up', 'down', 'flat');
+  if (points.length < 2) return;
+  sparkEl.classList.add(spark.tone === 'up' || spark.tone === 'down' ? spark.tone : 'flat');
+  let segment = [];
+  const flush = () => {
+    if (segment.length >= 2) {
+      const coords = segment.map((p) => `${(p.x * SPARK_W).toFixed(2)},${(0.5 + p.y * (SPARK_H - 1)).toFixed(2)}`);
+      sparkEl.appendChild(
+        sparkNode('polyline', { points: coords.join(' '), fill: 'none', stroke: 'currentColor' }),
+      );
+    } else if (segment.length === 1) {
+      sparkEl.appendChild(
+        sparkNode('circle', {
+          cx: (segment[0].x * SPARK_W).toFixed(2),
+          cy: (0.5 + segment[0].y * (SPARK_H - 1)).toFixed(2),
+          r: 1,
+          fill: 'currentColor',
+        }),
+      );
+    }
+    segment = [];
+  };
+  for (const point of points) {
+    if (point.gap) flush();
+    segment.push(point);
+  }
+  flush();
+}
 
 function reportSize() {
   requestAnimationFrame(() => {
@@ -24,8 +69,12 @@ window.taskbar.onUpdate((data) => {
     node.classList.remove('up', 'down');
     if (data.tone === 'up' || data.tone === 'down') node.classList.add(data.tone);
   }
+  renderSpark(data.spark);
+  strip.title = data.spark
+    ? `单击打开面板 · ${data.spark.rangeText} ${data.spark.changeText}`
+    : '单击打开面板 · 沿任务栏拖动可移位';
   document.body.dataset.ready = 'true';
-  const signature = `${data.mark}|${data.label}|${data.price}|${data.arrow}`;
+  const signature = `${data.mark}|${data.label}|${data.price}|${data.arrow}|${data.spark?.points?.length ?? 0}`;
   if (signature !== lastSignature) {
     lastSignature = signature;
     reportSize();

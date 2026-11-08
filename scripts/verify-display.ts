@@ -36,6 +36,7 @@ import {
   normalizeTrendSettings,
   TREND_GAP_MS,
   TREND_RANGE_ORDER,
+  trendSparkline,
   updateAgeText,
 } from '../packages/core/src/index.ts';
 
@@ -411,9 +412,13 @@ check(
 );
 check(
   '分时配置脏 range 退回全天',
-  JSON.stringify(normalizeTrendSettings({ enabled: 'no', range: '2h' })) === JSON.stringify({ enabled: true, range: 'day' }),
+  JSON.stringify(normalizeTrendSettings({ enabled: 'no', range: '3h' })) === JSON.stringify({ enabled: true, range: 'day' }),
 );
-check('时间范围只有三档', TREND_RANGE_ORDER.join('|') === '1h|12h|day', TREND_RANGE_ORDER.join('|'));
+check('时间范围覆盖 30 分钟到全天', TREND_RANGE_ORDER.join('|') === '30m|1h|2h|4h|6h|12h|day', TREND_RANGE_ORDER.join('|'));
+check(
+  '新增范围可保存',
+  JSON.stringify(normalizeTrendSettings({ enabled: true, range: '4h' })) === JSON.stringify({ enabled: true, range: '4h' }),
+);
 
 const rangeSamples = [
   { symbol: 'ZS', ts: TREND_NOW, buyPrice: 880 },
@@ -428,6 +433,21 @@ check('1 小时汇总只看窗口内', trendHour.open === 875 && trendHour.last 
 check('1 小时涨跌相对窗口首笔', trendHour.changeText === '+0.57%' && trendHour.tone === 'up', trendHour.changeText);
 check('1 小时横轴按实际窗口', trendHour.axisLabels.join('|') === '09:00|09:30|10:00', trendHour.axisLabels.join('|'));
 check('1 小时标题带范围', trendHour.windowText === '今日 · 1 小时' && trendHour.rangeText === '1 小时', trendHour.windowText);
+
+const trend30 = dayTrendSeries(rangeSamples, 'ZS', TREND_NOW, { range: '30m' });
+check('30 分钟只留窗口内采样', trend30.points.length === 2 && trend30.windowStart === TREND_NOW - 30 * 60_000);
+check('30 分钟横轴按实际窗口', trend30.axisLabels.join('|') === '09:30|09:45|10:00', trend30.axisLabels.join('|'));
+
+const spark = trendSparkline(trend30);
+check(
+  '任务栏迷你走势按时间比例归一化',
+  spark?.points.length === 2 && spark.points[0].x === 0 && Math.abs(spark.points[1].x - 1) < 1e-9,
+  JSON.stringify(spark?.points),
+);
+check('迷你走势价格越高 y 越小', !!spark && spark.points[1].y < spark.points[0].y);
+check('迷你走势保留涨跌颜色', spark?.tone === 'up', spark?.tone);
+check('少于两个点不画迷你走势', trendSparkline(trendDup) === null);
+check('迷你走势保留断线标记', trendSparkline(trend)?.points[2].gap === true);
 
 const trendHalf = dayTrendSeries(rangeSamples, 'ZS', TREND_NOW, { range: '12h' });
 check('半天包含当天全部采样且不跨出自然日', trendHalf.points.length === 4 && trendHalf.windowStart === trendHalf.dayStart);

@@ -62,7 +62,7 @@
           <span class="lbl">时间范围</span>
           <select id="trend-range-select"></select>
         </div>
-        <p class="hint">详情页顶部展示主显品种曲线；涨跌按所选区间首笔采样计算。休市时自动展示最近一个有数据的交易日。</p>
+        <p class="hint">详情页顶部展示主显品种曲线；涨跌按所选区间首笔采样计算。Windows 任务栏走势使用同一时间范围。休市时自动展示最近一个有数据的交易日。</p>
       </section>
 
       <div class="interval-row">
@@ -91,6 +91,11 @@
       <div class="ball-row" id="taskbar-row" hidden>
         <label class="on"><input type="checkbox" id="taskbar-on" /> 任务栏文字</label>
         <span class="lbl taskbar-note">显示在托盘左侧，可沿任务栏拖动</span>
+      </div>
+
+      <div class="ball-row" id="taskbar-trend-row" hidden>
+        <label class="on"><input type="checkbox" id="taskbar-trend-on" /> 任务栏走势</label>
+        <span class="lbl">在任务栏文字右侧显示迷你分时曲线</span>
       </div>
 
       <div class="ball-row" id="ball-row" hidden>
