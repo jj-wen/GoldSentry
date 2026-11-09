@@ -12,7 +12,17 @@ const PRODUCTS: Record<string, { symbol: string; name: string; label: string }> 
   '2045976593': { symbol: 'ZX', name: '中信积存金', label: '中信' },
 };
 
-export const JD_PRODUCT_SKUS = Object.keys(PRODUCTS);
+// 纯数字对象键会被 JS 按数值升序枚举，21001001000001 会掉到最后，所以顺序单独写死
+const SKU_ORDER = [
+  '1961543816',
+  '21001001000001',
+  '2005453243',
+  '2024345112',
+  '2039007297',
+  '2045976593',
+];
+
+export const JD_PRODUCT_SKUS = SKU_ORDER;
 
 interface BatchRow {
   productSku: string;
@@ -41,10 +51,13 @@ export function parseBatchPrice(payload: unknown, fetchedAt = Date.now()): Quote
     throw new Error(`jd batch 返回异常: ${JSON.stringify(payload).slice(0, 160)}`);
   }
 
+  // 接口返回顺序不稳定（民生常排在最后），按 SKU_ORDER 输出，默认民生第二
+  const bySku = new Map(rows.data.map((row) => [row.productSku, row]));
   const quotes: Quote[] = [];
-  for (const row of rows.data) {
-    const product = PRODUCTS[row.productSku];
-    if (!product) continue;
+  for (const sku of SKU_ORDER) {
+    const row = bySku.get(sku);
+    if (!row) continue;
+    const product = PRODUCTS[sku];
     const buyPrice = toNumber(row.buyPrice);
     const sellPrice = toNumber(row.sellPrice);
     if (!Number.isFinite(buyPrice)) continue;

@@ -48,14 +48,24 @@ body[data-vertical='true'] #strip {
   color: #ffb020;
 }
 
+.price {
+  font-size: 13px;
+}
+
 .price.up,
+.pct.up,
 .arrow.up {
   color: #ff6b6b;
 }
 
 .price.down,
+.pct.down,
 .arrow.down {
   color: #4ade80;
+}
+
+.pct {
+  font-size: 11px;
 }
 
 .arrow {

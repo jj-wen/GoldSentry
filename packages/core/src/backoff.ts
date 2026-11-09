@@ -13,5 +13,6 @@ export function backoffSeconds(baseSeconds: number, failures: number): number {
   const base = Number.isFinite(baseSeconds) && baseSeconds > 0 ? baseSeconds : 30;
   if (!Number.isFinite(failures) || failures < BACKOFF_AFTER_FAILURES) return base;
   const doublings = Math.min(failures - BACKOFF_AFTER_FAILURES + 1, MAX_DOUBLINGS);
-  return Math.min(BACKOFF_MAX_SECONDS, Math.round(base * 2 ** doublings));
+  // 用户已经选了比上限更长的间隔（如 10 分钟）时不能被"降频"反而调快
+  return Math.max(base, Math.min(BACKOFF_MAX_SECONDS, Math.round(base * 2 ** doublings)));
 }

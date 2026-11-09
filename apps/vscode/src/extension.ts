@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { QuoteStore, backoffSeconds, feeCell, formatPct, formatPrice, pollOnce, priceTone, sendAlertsToBark, showArrow, sources, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
+import { QuoteStore, backoffSeconds, bankSessionAt, feeCell, formatPct, formatPrice, pollOnce, priceTone, sendAlertsToBark, showArrow, sources, tradingHoursOf, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
 
 const COOLDOWN_MINUTES = 30;
 
@@ -28,6 +28,7 @@ function displaySetting(): DisplayToggles {
     name: config.get<boolean>('showName', true),
     up: config.get<boolean>('showUp', true),
     down: config.get<boolean>('showDown', true),
+    pct: config.get<boolean>('showPct', false),
   };
 }
 
@@ -42,7 +43,11 @@ function renderStatus(picked: Quote | undefined, errors: string[]): void {
   const name = display.name ? `${picked.label} ` : '';
   // 箭头只在真实涨/跌且该方向没被关掉时出现；持平不带箭头
   const arrow = showArrow(picked.dayChangePct, display) ? (priceTone(picked.dayChangePct) === 'down' ? ' ▼' : ' ▲') : '';
-  statusItem.text = `$(pulse) ${name}${formatPrice(picked.buyPrice)}${arrow}`;
+  const pct =
+    display.pct && typeof picked.dayChangePct === 'number' && Number.isFinite(picked.dayChangePct)
+      ? ` ${formatPct(picked.dayChangePct)}`
+      : '';
+  statusItem.text = `$(pulse) ${name}${formatPrice(picked.buyPrice)}${arrow}${pct}`;
   statusItem.tooltip = buildTooltip(errors);
   statusItem.show();
 }
@@ -84,15 +89,26 @@ async function refresh(memento: vscode.Memento): Promise<void> {
 function buildTooltip(errors: string[]): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
   md.appendMarkdown(`**积存金实时价** · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })} · ${lastMillis}ms\n\n`);
-  md.appendMarkdown('| 品种 | 买入 | 卖出 | 点差 | 涨跌 | 费用 |\n|---|---:|---:|---:|---:|---:|---:|\n');
+  // 一家银行一段，别用宽表格：VS Code hover 太窄时表格会挤成一团
   for (const q of quotes) {
+    const hours = tradingHoursOf(q.symbol);
+    const session = bankSessionAt(q.symbol);
+    const update = new Date(q.quotedAt).toLocaleTimeString('zh-CN', { hour12: false });
+    md.appendMarkdown(`**${q.name}**（${q.symbol}）  \n`);
     md.appendMarkdown(
-      `| ${q.label} | ${formatPrice(q.buyPrice)} | ${formatPrice(q.sellPrice)} | ${formatPrice(q.spread)} | ` +
-        `${formatPct(q.dayChangePct)} | ` +
-        `${feeCell(q.symbol).text} |\n`,
+      `买入 ${formatPrice(q.buyPrice)} · 卖出 ${formatPrice(q.sellPrice)} · 点差 ${formatPrice(q.spread)}  \n`,
     );
+    md.appendMarkdown(`涨跌 ${formatPct(q.dayChangePct)} · 费用 ${feeCell(q.symbol).text} · 更新 ${update}  \n`);
+    if (hours) {
+      const reason = session.reason ? `（${session.reason}）` : '';
+      md.appendMarkdown(`交易 ${hours.text} · ${session.text}${reason}  \n`);
+    }
+    md.appendMarkdown('\n');
   }
-  md.appendMarkdown('\n_费用为人工核实的公开费率，非实时；点差 0 多为上游只给单边价；带 ⚠ 表示核实已超过 90 天，请以银行 App 为准_\n');
+  md.appendMarkdown(
+    '_交易规则：交易日一般 09:00 开市；工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00。周末与法定节假日休市，节前最后一个交易日晚上停夜盘。_\n',
+  );
+  md.appendMarkdown('_费用为人工核实的公开费率，非实时；点差 0 多为上游只给单边价；带 ⚠ 表示核实已超过 90 天，请以银行 App 为准_\n');
   md.appendMarkdown('_涨跌幅口径以各行 App 为准，不同银行“昨收”定义不同，勿横向比较；建行日价为 10:30 定价 + 盘中赎回价_\n');
   const base = Math.max(1, vscode.workspace.getConfiguration('goldsentry').get<number>('intervalSeconds', 10));
   const effective = backoffSeconds(base, failureStreak);
@@ -189,6 +205,7 @@ async function openSettings(memento: vscode.Memento): Promise<void> {
   const display = displaySetting();
   const items = [
     { label: '显示品种名称', detail: display.name ? '开' : '关', key: 'showName' },
+    { label: '显示涨跌百分比', detail: display.pct ? '开' : '关', key: 'showPct' },
     { label: '显示上涨（红）', detail: display.up ? '开' : '关', key: 'showUp' },
     { label: '显示下跌（绿）', detail: display.down ? '开' : '关', key: 'showDown' },
     { label: '刷新间隔', detail: `${config.get<number>('intervalSeconds', 10)} 秒`, key: 'interval' },
@@ -212,11 +229,16 @@ async function openSettings(memento: vscode.Memento): Promise<void> {
       renderStatus(quotes.find((q) => q.symbol === symbolSetting()) ?? quotes[0], []);
       break;
     }
+    case 'showPct': {
+      await config.update('showPct', !config.get<boolean>('showPct', false), vscode.ConfigurationTarget.Global);
+      renderStatus(quotes.find((q) => q.symbol === symbolSetting()) ?? quotes[0], []);
+      break;
+    }
     case 'interval': {
       const raw = await vscode.window.showInputBox({
-        prompt: '刷新间隔（秒），可选 1/2/3/5/8/10/30/60/120/300',
+        prompt: '刷新间隔（秒），可选 5/10/30/60/120/300/600',
         value: String(config.get<number>('intervalSeconds', 10)),
-        validateInput: (v) => (Number(v) >= 1 ? null : '至少 1 秒'),
+        validateInput: (v) => ([5, 10, 30, 60, 120, 300, 600].includes(Number(v)) ? null : '可选 5/10/30/60/120/300/600 秒'),
       });
       if (raw) {
         await config.update('intervalSeconds', Number(raw), vscode.ConfigurationTarget.Global);

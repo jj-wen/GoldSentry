@@ -41,7 +41,8 @@
         </thead>
         <tbody></tbody>
       </table>
-      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序。点差列优先显示买入卖一的点差，点差为 0 时显示服务费（鼠标悬停看口径）。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。</p>
+      <div id="quote-tip" class="quote-tip" hidden></div>
+      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序；鼠标悬停任意一行可看该银行的全名、费用口径、报价时间与交易时段。交易日一般 09:00 开市，工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00；周末与法定节假日休市，节前最后一个交易日晚上停夜盘。点差列优先显示买入卖一的点差，点差为 0 时显示服务费。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。</p>
     </main>
 
     <main id="view-settings" hidden>
@@ -49,10 +50,11 @@
         <div class="rules-head"><span>显示内容</span></div>
         <div class="disp-row">
           <label><input type="checkbox" id="disp-name" /> 品种名称</label>
+          <label><input type="checkbox" id="disp-pct" /> 涨跌百分比</label>
           <span class="lbl">涨跌箭头</span>
           <select id="disp-arrow"></select>
         </div>
-        <p class="hint">作用于菜单栏标题以外的悬浮球与任务栏文字：选择只决定箭头出不出现，价格颜色始终按真实涨跌（涨红跌绿，持平才是白色）。</p>
+        <p class="hint">作用于菜单栏、悬浮球与任务栏文字。箭头下拉只决定箭头出不出现，价格颜色始终按真实涨跌（涨红跌绿，持平才是白色）；百分比跟随接口给出的当日涨跌幅。</p>
       </section>
 
       <section class="rules">
@@ -68,16 +70,13 @@
       <div class="interval-row">
         <span class="lbl">刷新间隔</span>
         <select id="interval">
-          <option value="1">1 秒</option>
-          <option value="2">2 秒</option>
-          <option value="3">3 秒</option>
           <option value="5">5 秒</option>
-          <option value="8">8 秒</option>
           <option value="10">10 秒</option>
           <option value="30">30 秒</option>
           <option value="60">1 分钟</option>
           <option value="120">2 分钟</option>
           <option value="300">5 分钟</option>
+          <option value="600">10 分钟</option>
         </select>
         <span class="warn">过快可能触发上游风控</span>
       </div>
@@ -85,7 +84,7 @@
 
       <div class="ball-row" id="login-row" hidden>
         <label class="on"><input type="checkbox" id="login-on" /> 开机自启</label>
-        <span class="lbl">登录系统后自动运行 GoldSentry</span>
+        <span class="lbl" id="login-hint">登录系统后自动运行 GoldSentry</span>
       </div>
 
       <div class="ball-row" id="taskbar-row" hidden>

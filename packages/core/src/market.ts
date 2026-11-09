@@ -78,6 +78,173 @@ export interface MarketSession {
   reason: string;
 }
 
+export interface TradingHoursInfo {
+  /** 展示用的时段文案，如「周一 09:00–周六 02:00」 */
+  text: string;
+  /** 开盘点，0–1440 分钟 */
+  openMinutes: number;
+  /** 收盘点；凌晨收盘写成 0–1440 内的分钟数 */
+  closeMinutes: number;
+  /** 开盘时刻文案，用于「开市前（09:10 开市）」 */
+  openText: string;
+  /** 收盘时刻文案，用于「已收盘（22:30）」 */
+  closeText: string;
+  /** 与积存金并集时段无关的品种（建行账户金） */
+  continuous?: boolean;
+  /** 规则说明，直接给详情面板/VS Code hover */
+  note: string;
+}
+
+/** 交易日：周一至周五且不在休市公告里；调休补班的周末仍按周末休市 */
+function isTradingDay(dateKey: string, weekday: number): boolean {
+  return weekday >= 1 && weekday <= 5 && !holidayOf(dateKey);
+}
+
+/**
+ * 各家时段来自京东产品页的 goldPriceQuoteTimePeriodList + 本地 quotes.json 实测收盘点：
+ * 工商 09:10–22:30；浙商 周一 09:00–周六 02:30；民生 09:10–次日 02:00；
+ * 广发/兴业/中信 09:00–次日 02:00；建行积存 周一 09:10–周六 02:30。
+ * 京东对浙商写 00:00–23:59、对广发写 15:30–20:00 停盘，但实测报价分别到 02:30、且午后连续，
+ * 以实测为准；周末和法定节假日统一休市。
+ */
+const TRADING_HOURS: Record<string, TradingHoursInfo> = {
+  GS: {
+    text: '周一 09:10–周五 22:30',
+    openMinutes: 9 * 60 + 10,
+    closeMinutes: 22 * 60 + 30,
+    openText: '09:10',
+    closeText: '22:30',
+    note: '工商积存金 09:10 开市、22:30 收盘；周末与法定节假日休市，节前最后交易日晚上停夜盘',
+  },
+  ZS: {
+    text: '周一 09:00–周六 02:30',
+    openMinutes: 9 * 60,
+    closeMinutes: 2 * 60 + 30,
+    openText: '09:00',
+    closeText: '次日 02:30',
+    note: '浙商积存金周一 09:00 开市、周六 02:30 收盘；周末与法定节假日休市，节前最后交易日晚上停夜盘',
+  },
+  MS: {
+    text: '周一 09:10–周六 02:00',
+    openMinutes: 9 * 60 + 10,
+    closeMinutes: 2 * 60,
+    openText: '09:10',
+    closeText: '次日 02:00',
+    note: '民生积存金 09:10 开市、次日 02:00 收盘；周末与法定节假日休市，节前最后交易日晚上停夜盘',
+  },
+  GF: {
+    text: '周一 09:00–周六 02:00',
+    openMinutes: 9 * 60,
+    closeMinutes: 2 * 60,
+    openText: '09:00',
+    closeText: '次日 02:00',
+    note: '广发积存金 09:00 开市、次日 02:00 收盘；实测午后不中断，周末与法定节假日休市',
+  },
+  XY: {
+    text: '周一 09:00–周六 02:00',
+    openMinutes: 9 * 60,
+    closeMinutes: 2 * 60,
+    openText: '09:00',
+    closeText: '次日 02:00',
+    note: '兴业积存金 09:00 开市、次日 02:00 收盘；周末与法定节假日休市，节前最后交易日晚上停夜盘',
+  },
+  ZX: {
+    text: '周一 09:00–周六 02:00',
+    openMinutes: 9 * 60,
+    closeMinutes: 2 * 60,
+    openText: '09:00',
+    closeText: '次日 02:00',
+    note: '中信积存金 09:00 开市、次日 02:00 收盘；周末与法定节假日休市，节前最后交易日晚上停夜盘',
+  },
+  JJC: {
+    text: '周一 09:10–周六 02:30',
+    openMinutes: 9 * 60 + 10,
+    closeMinutes: 2 * 60 + 30,
+    openText: '09:10',
+    closeText: '次日 02:30',
+    note: '建行黄金积存周一 09:10 至周六 02:30；主动积存价每日 10:30 定价，赎回价盘中更新',
+  },
+  AU9999: {
+    text: '连续盘（以建行 App 为准）',
+    openMinutes: 0,
+    closeMinutes: 24 * 60,
+    openText: '以建行 App 为准',
+    closeText: '以建行 App 为准',
+    continuous: true,
+    note: '建行账户金不受积存金并集时段约束，具体交易时间以建行 App 为准',
+  },
+  AU9995: {
+    text: '连续盘（以建行 App 为准）',
+    openMinutes: 0,
+    closeMinutes: 24 * 60,
+    openText: '以建行 App 为准',
+    closeText: '以建行 App 为准',
+    continuous: true,
+    note: '建行账户金不受积存金并集时段约束，具体交易时间以建行 App 为准',
+  },
+};
+
+export function tradingHoursOf(symbol: string): TradingHoursInfo | undefined {
+  return TRADING_HOURS[symbol];
+}
+
+export interface BankSession {
+  open: boolean;
+  /** 开市中 / 未开盘 / 已收盘 / 休市 / 连续盘 */
+  text: string;
+  /** 休市或收盘原因，开市时为空串 */
+  reason: string;
+}
+
+/**
+ * 单家银行的交易状态。按「今天/昨天是不是交易日 + 该行开盘/收盘点」判断，
+ * 凌晨 00:00–02:30 属于前一交易日夜盘；工商 22:30 收盘后市场并集仍开着，
+ * 所以不能直接用 marketSessionAt。
+ */
+export function bankSessionAt(symbol: string, now = Date.now()): BankSession {
+  const hours = tradingHoursOf(symbol);
+  const { dateKey, weekday, minutes } = beijingParts(now);
+  if (!hours) {
+    const base = marketSessionAt(now);
+    return { open: base.open, text: base.open ? '开市中' : '休市', reason: base.reason };
+  }
+  if (hours.continuous) {
+    const base = marketSessionAt(now);
+    return { open: base.open, text: base.open ? '连续盘' : '休市', reason: base.reason };
+  }
+
+  const todayTrading = isTradingDay(dateKey, weekday);
+  const prev = prevDateKey(dateKey);
+  const prevWeekday = (weekday + 6) % 7;
+  const prevTrading = isTradingDay(prev, prevWeekday);
+  // 收盘点小于开盘点表示跨到次日凌晨，例如 09:00–02:00 记成 09:00–1560
+  const endMinutes = hours.closeMinutes <= hours.openMinutes ? hours.closeMinutes + 1440 : hours.closeMinutes;
+  const todayOpen =
+    todayTrading &&
+    minutes >= hours.openMinutes &&
+    minutes < endMinutes &&
+    !(NO_NIGHT_EVENINGS.has(dateKey) && minutes >= DAY_CLOSE);
+  const overnightOpen =
+    prevTrading &&
+    !holidayOf(dateKey) &&
+    minutes < NIGHT_END &&
+    minutes + 1440 >= hours.openMinutes &&
+    minutes + 1440 < endMinutes &&
+    !NO_NIGHT_EVENINGS.has(prev);
+  if (todayOpen || overnightOpen) return { open: true, text: '开市中', reason: '' };
+
+  if (todayTrading && NO_NIGHT_EVENINGS.has(dateKey) && minutes >= DAY_CLOSE) {
+    return { open: false, text: '已收盘', reason: '节前夜盘暂停' };
+  }
+  if (!todayTrading) {
+    return { open: false, text: '休市', reason: closedReason(dateKey, weekday, false) };
+  }
+  if (minutes < hours.openMinutes) {
+    return { open: false, text: '未开盘', reason: `开市前（${hours.openText} 开市）` };
+  }
+  return { open: false, text: '已收盘', reason: `已收盘（${hours.closeText}）` };
+}
+
 export function marketSessionAt(now = Date.now()): MarketSession {
   const { dateKey, weekday, minutes } = beijingParts(now);
   if (minutes < NIGHT_END) {

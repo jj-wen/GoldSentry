@@ -108,6 +108,16 @@ function check(label, condition, extra = '') {
       /勿横向比较/.test(statusItem.tooltip.value) &&
       /建行日价/.test(statusItem.tooltip.value),
   );
+  check(
+    'tooltip 一家银行一段，不挤成表格',
+    /\*\*浙商积存金\*\*（ZS）/.test(statusItem.tooltip.value) &&
+      /\n\n\*\*民生积存金\*\*/.test(statusItem.tooltip.value),
+  );
+  check(
+    'tooltip 带交易时段与开市状态',
+    /交易 周一 09:00–周六 02:30 · (开市中|未开盘|已收盘|休市)/.test(statusItem.tooltip.value) &&
+      /交易规则/.test(statusItem.tooltip.value),
+  );
 
   quickPicks.length = 0;
   quickPickResult = undefined;

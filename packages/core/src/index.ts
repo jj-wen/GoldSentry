@@ -38,7 +38,15 @@ export {
 } from './alerts.ts';
 export { pollOnce, type PollResult } from './poller.ts';
 export { assessHealth, type HealthReport, type HealthStatus } from './health.ts';
-export { marketSessionAt, MARKET_SCHEDULE_AS_OF, type MarketSession } from './market.ts';
+export {
+  bankSessionAt,
+  marketSessionAt,
+  tradingHoursOf,
+  MARKET_SCHEDULE_AS_OF,
+  type BankSession,
+  type MarketSession,
+  type TradingHoursInfo,
+} from './market.ts';
 export { feeAgeDays, feeCell, feeOf, feeShortText, FEE_STALE_DAYS, PRODUCT_FEES, type FeeCell, type FeeInfo } from './fees.ts';
 export { backoffSeconds, BACKOFF_AFTER_FAILURES, BACKOFF_MAX_SECONDS } from './backoff.ts';
 export { sendBark, sendAlertsToBark, type BarkConfig, type BarkResult } from './notify.ts';

@@ -39,7 +39,7 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 7. **金额展示一律走 core 的 `formatPrice` / `formatPct`**（固定两位小数，缺失显示 `—`），不要在面板、托盘、悬浮球、任务栏文字或扩展里手写 `toFixed`。新增展示位先补 `verify:display`。
 8. **Windows 任务栏文字是覆盖窗口，不是系统内嵌**。几何只从显示器 `bounds` 与 `workArea` 的差推断（`core/taskbar.ts`）；系统任务栏窗口 Electron 读不到，别尝试依赖 `Shell_TrayWnd` 的字段或坐标。是否因全屏应用隐藏由窗口枚举结果 + `coversTaskbar` 决定（见陷阱表），不要拿全局通知状态判断。
 9. **点击语义不许分形态漂移**：左键=详情、右键=设置，托盘、悬浮球、任务栏文字一致。托盘不设 `contextMenu`（否则右键被菜单抢占），菜单项全部放在面板设置页里。VS Code 状态栏做不到左右键区分，用第二个 `$(gear)` 项承担设置入口，改动要在 README 与代码注释里说明这是平台限制。
-10. **显示什么由 core 决定，不由外壳决定**。品种名/箭头/颜色一律走 `settings.display` + `core/format.ts` 的 `priceTone`（颜色：涨红跌绿，**持平与未知都是白色**）、`showArrow`（箭头：该方向被关掉或持平就不出现）、`arrowModeOf` / `displayFromArrowMode`（面板那个"涨跌箭头"下拉框与两个布尔的互转）与 `normalizeDisplay`；新增展示位时不要自己判断方向。关掉某个方向**只隐藏箭头，不能把价格颜色也一起变白**（曾经踩过： tone 跟着开关走，关下跌后绿色价格变成白色，看着像数据挂了）。
+10. **显示什么由 core 决定，不由外壳决定**。品种名/箭头/涨跌幅/颜色一律走 `settings.display`（`name` / `up` / `down` / `pct`）+ `core/format.ts` 的 `priceTone`（颜色：涨红跌绿，**持平与未知都是白色**）、`showArrow`（箭头：该方向被关掉或持平就不出现）、`arrowModeOf` / `displayFromArrowMode`（面板那个"涨跌箭头"下拉框与两个布尔的互转）与 `normalizeDisplay`；`pct` 默认关，打开后各端在价格后追加 `formatPct`，没有涨跌幅就整段不显示。新增展示位时不要自己判断方向。关掉某个方向**只隐藏箭头，不能把价格颜色也一起变白**（曾经踩过： tone 跟着开关走，关下跌后绿色价格变成白色，看着像数据挂了）。
 
 ## 已知陷阱（都是踩过的）
 
@@ -68,6 +68,8 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 | 任务栏文字/悬浮球抢焦点、出现在 Alt+Tab | 普通 `BrowserWindow` 会被当成应用窗口 | `focusable:false` + `skipTaskbar:true` + `alwaysOnTop`，用 `showInactive()` 显示 |
 | 任务栏文字拖一下整块看不见（窗口还在、`innerText` 仍在更新） | Windows 上 Chromium 用 DWM 遮挡计算判断窗口可见性；`focusable:false` 的置顶透明窗口盖在任务栏上容易被判成"全被遮挡"，于是停止绘制 | 启动时 `app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')`（仅 win32）。诊断时看渲染层的 `document.visibilityState`，光看 Win32 `IsWindowVisible` 会误判成正常 |
 | 任务栏文字拖到最右就"消失"在时钟下面 | 可拖范围以前只夹到 `rect.width - width`，没减托盘安全边距 | `placeOnTaskbar` 的夹取上限同样减 `TASKBAR_END_MARGIN`；改几何先跑 `verify:display` |
+| macOS 从 dmg 挂载目录开启开机自启，重启后路径失效 | `setLoginItemSettings` 可能把 `/Volumes/GoldSentry/...` 写进登录项 | `supportsLoginItem()` 检测 `app.getPath('exe').startsWith('/Volumes/')`；面板禁用并提示先拖进「应用程序」 |
+| 开发态拨「开机自启」注册进去的是 Electron 本体 | `app.isPackaged === false` 时也会走系统 API | 开发态显示开关但禁用并说明原因；只在打包后的 mac/win 调 `setLoginItemSettings` |
 | 全屏看视频时任务栏文字仍压在画面上 | 全屏应用的 `display.bounds` / `workArea` 不变，`detectTaskbar` 仍认为任务栏存在；`SHQueryUserNotificationState` 是整机全局状态（副屏全屏也会报繁忙），不能用来决定该隐藏哪一块 | `apps/menubar/src/fullscreen.ts` 用常驻 PowerShell 探针枚举可见且有标题的顶层窗口，把「窗口矩形≈所在显示器矩形」的显示器交给 `core/taskbar.ts` 的 `coversTaskbar`；只有全屏显示器盖住任务栏贴纸那块才隐藏，改这块先跑 `verify:display` |
 | 退出全屏后任务栏文字再也不回来 | 枚举时把 DWM 已隐藏（`DWMWA_CLOAKED`）的窗口和桌面窗口当成了全屏：本机 `TextInputHost` 的「Windows 默认锁屏界面」`IsWindowVisible=true`、矩形正好 1920×1080，`Program Manager` 也会命中；全屏集合永远非空，探针就不再输出变化 | 探针必须跳过 `DwmGetWindowAttribute(hwnd, 14) != 0` 的窗口，以及 `Progman` / `WorkerW` / `Shell_TrayWnd` / `Shell_SecondaryTrayWnd` 这些壳类名；验证时临时忽略 Chrome 进程，全屏集合应为空 |
 | 悬浮球放大后拖动比鼠标快 | `setZoomFactor` 放大页面后，1 个 CSS 像素 = scale 个屏幕像素，`movementX/Y` 是 CSS 像素 | `ball:move-by` 里把增量乘回 `settings.ball.scale` 再 `setPosition` |
@@ -78,6 +80,8 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 | 设了 `hidden` 的行/块仍然显示（DOM 里 `.hidden === true`） | 作者样式 `.ball-row { display:flex }` 优先级高于 UA 的 `[hidden] { display:none }` | 全局补 `[hidden] { display:none !important }`；自动化断言要用 `getComputedStyle(...).display`，只查 `.hidden` 会假通过，截图才看得见 |
 | SVG 元素的 `hidden` 不生效：要么一直不显示，要么关了仍占宽度 | `SVGElement` 没有 `hidden` 这个 IDL 属性，赋值只挂扩展属性、不动内容属性；UA 的 `[hidden]` 规则也管不到 SVG | 用 `el.toggleAttribute('hidden', ...)` 改内容属性，并在样式里显式写 `.spark[hidden] { display:none }` |
 | 暂停轮询后再恢复，永远不再刷新 | 暂停时 `clearInterval` 清掉了定时器，恢复只刷新一次却没重建 | 用每轮重排的 `setTimeout` 链，暂停只跳过取数、链保持活着；改轮询节奏时顺带检查 dispose/deactivate 清的是 `clearTimeout` |
+| macOS 菜单栏价格想变红绿 | `tray.setTitle()` 在 macOS 只支持 `fontType`，系统标题是单色文字；托盘图片固定排在标题左边（`NSStatusItem` 的 `imagePosition` Electron 没暴露） | 颜色/位置要求用系统文字做不到时，把整条标题画成 2x PNG 当托盘图标（`status-renderer.ts`）：文字用系统色、末尾画彩色三角，别在标题里重复符号；渲染失败退回系统标题 + 左侧红 ▲/绿 ▼ 图标。只染某一位小数同理，必须走图片 |
+| 图标文件看着正常，托盘/菜单栏却空白 | PNG 解压后每行比声明宽度多 1 字节，Chromium 解码器直接判空（`nativeImage.isEmpty() === true`） | 用 `isEmpty()` 校验资源；生成图标走 `scripts/make-tray-icons.cjs` 的自写编码器，别用会写出错行宽的旧工具 |
 
 ## 新增一家银行/一个数据源
 

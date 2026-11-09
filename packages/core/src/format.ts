@@ -132,9 +132,11 @@ export interface DisplayToggles {
   name: boolean;
   up: boolean;
   down: boolean;
+  /** 状态栏是否显示涨跌幅百分比 */
+  pct: boolean;
 }
 
-export const DEFAULT_DISPLAY: DisplayToggles = { name: true, up: true, down: true };
+export const DEFAULT_DISPLAY: DisplayToggles = { name: true, up: true, down: true, pct: false };
 
 export function normalizeDisplay(raw: unknown): DisplayToggles {
   const input = (raw ?? {}) as Partial<DisplayToggles>;
@@ -142,6 +144,7 @@ export function normalizeDisplay(raw: unknown): DisplayToggles {
     name: typeof input.name === 'boolean' ? input.name : DEFAULT_DISPLAY.name,
     up: typeof input.up === 'boolean' ? input.up : DEFAULT_DISPLAY.up,
     down: typeof input.down === 'boolean' ? input.down : DEFAULT_DISPLAY.down,
+    pct: typeof input.pct === 'boolean' ? input.pct : DEFAULT_DISPLAY.pct,
   };
 }
 
@@ -185,12 +188,13 @@ export function arrowModeOf(display: DisplayToggles): ArrowMode {
   return 'none';
 }
 
-/** 只改箭头模式，品种名开关原样保留 */
+/** 只改箭头模式，品种名与涨跌百分比开关原样保留 */
 export function displayFromArrowMode(display: DisplayToggles, mode: ArrowMode): DisplayToggles {
   return {
     name: display.name,
     up: mode === 'both' || mode === 'up',
     down: mode === 'both' || mode === 'down',
+    pct: display.pct,
   };
 }
 

@@ -10,6 +10,7 @@ const els = {
   intervalNote: document.getElementById('interval-note'),
   loginRow: document.getElementById('login-row'),
   loginOn: document.getElementById('login-on'),
+  loginHint: document.getElementById('login-hint'),
   barkOn: document.getElementById('bark-on'),
   barkServer: document.getElementById('bark-server'),
   barkKey: document.getElementById('bark-key'),
@@ -42,11 +43,13 @@ const els = {
   trendEmpty: document.getElementById('trend-empty'),
   trendAxis: document.getElementById('trend-axis'),
   dispName: document.getElementById('disp-name'),
+  dispPct: document.getElementById('disp-pct'),
   dispArrow: document.getElementById('disp-arrow'),
   trendOn: document.getElementById('trend-on'),
   trendRangeSelect: document.getElementById('trend-range-select'),
   notifyTest: document.getElementById('notify-test'),
   quit: document.getElementById('quit'),
+  quoteTip: document.getElementById('quote-tip'),
 };
 
 const TONE_CLASS = { up: 'up', down: 'down', flat: '' };
@@ -56,7 +59,66 @@ function escAttr(text) {
   return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 }
 
+let quoteTipTimer = 0;
+let quoteTipRow = null;
+/** 轮询会重建表格，记住指针停在哪家，重建后还能把卡片接上 */
+let hoveredSymbol = null;
+
+function hideQuoteTip() {
+  clearTimeout(quoteTipTimer);
+  quoteTipTimer = 0;
+  quoteTipRow = null;
+  if (els.quoteTip) els.quoteTip.hidden = true;
+}
+
+function placeQuoteTip(row) {
+  const tip = els.quoteTip;
+  tip.hidden = false;
+  const anchor = row.getBoundingClientRect();
+  const box = tip.getBoundingClientRect();
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8));
+  let top = anchor.bottom + 6;
+  if (top + box.height > window.innerHeight - 8) top = Math.max(8, anchor.top - box.height - 6);
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+
+function quoteTipHtml(quote, cell, detail) {
+  const tone = TONE_CLASS[cell.tone] ?? '';
+  const sessionClass = detail?.sessionOpen ? 'open' : 'closed';
+  const sessionReason = detail?.sessionReason
+    ? `<div class="qt-note">${escAttr(detail.sessionReason)}</div>`
+    : '';
+  return `<div class="qt-head"><span class="qt-name">${escAttr(detail?.name ?? quote.name)}</span><span class="qt-sym">${escAttr(quote.symbol)}</span></div>
+    <div class="qt-grid">
+      <span>买入</span><b>${cell.buy}</b>
+      <span>卖出</span><b>${cell.sell}</b>
+      <span>点差</span><b>${escAttr(detail?.spreadText ?? '—')}</b>
+      <span>服务费</span><b>${escAttr(detail?.fee ?? '—')}</b>
+      <span>涨跌</span><b class="${tone}">${cell.pct}</b>
+      <span>更新</span><b>${cell.update}</b>
+    </div>
+    <div class="qt-line"><span>交易时段</span><b>${escAttr(detail?.hours ?? '—')}</b><em class="${sessionClass}">${escAttr(detail?.session ?? '—')}</em></div>
+    ${sessionReason}
+    <div class="qt-note">${escAttr(detail?.hoursNote ?? '')}</div>
+    <div class="qt-note">点差：${escAttr(detail?.spreadNote ?? '')}</div>
+    <div class="qt-note">服务费：${escAttr(detail?.feeNote ?? '')}</div>
+    <div class="qt-note">${escAttr(detail?.source ?? '')} · ${escAttr(detail?.basis ?? '')} · 报价 ${escAttr(detail?.quoteTime ?? '—')}</div>`;
+}
+
+function scheduleQuoteTip(row, quote, cell, detail) {
+  clearTimeout(quoteTipTimer);
+  quoteTipRow = row;
+  quoteTipTimer = setTimeout(() => {
+    if (hold?.dragging || quoteTipRow !== row) return;
+    els.quoteTip.innerHTML = quoteTipHtml(quote, cell, detail);
+    placeQuoteTip(row);
+  }, 120);
+}
+
 function renderQuotes(next) {
+  const keepHover = hoveredSymbol;
+  hideQuoteTip();
   els.body.innerHTML = '';
   const cells = next.cells ?? {};
   const spreadCells = next.spreadCells ?? {};
@@ -68,18 +130,39 @@ function renderQuotes(next) {
     const spread = spreadCells[quote.symbol] ?? { text: '—', basis: 'fee', note: '点差与费率均未知', stale: false };
     row.dataset.symbol = quote.symbol;
     if (primary) row.classList.add('primary');
-    row.innerHTML = `<td class="name" title="${escAttr(quote.name)}">${primary ? '● ' : ''}${escAttr(quote.label)}</td>
+    row.innerHTML = `<td class="name">${primary ? '● ' : ''}${escAttr(quote.label)}</td>
       <td class="buy">${cell.buy}</td>
       <td>${cell.sell}</td>
-      <td class="spread${spread.stale ? ' stale-fee' : ''}" title="${escAttr(spread.note)}">${spread.text}</td>
+      <td class="spread${spread.stale ? ' stale-fee' : ''}">${spread.text}</td>
       <td class="${TONE_CLASS[cell.tone] ?? ''}">${cell.pct}</td>
       <td class="${cell.updateStale ? 'stale' : ''}">${cell.update}</td>`;
+    const detail = next.details?.[quote.symbol];
+    row.addEventListener('mouseenter', () => {
+      hoveredSymbol = quote.symbol;
+      scheduleQuoteTip(row, quote, cell, detail);
+    });
+    row.addEventListener('mousemove', () => {
+      if (quoteTipRow === row && !els.quoteTip.hidden) placeQuoteTip(row);
+    });
+    row.addEventListener('mouseleave', () => {
+      hoveredSymbol = null;
+      hideQuoteTip();
+    });
     row.addEventListener('click', () => {
       // 拖拽结束也会补一次 click，手势不能同时改主显品种
       if (suppressClick) return;
+      hideQuoteTip();
       window.gold.setPrimary(quote.symbol).then(applyState);
     });
     els.body.appendChild(row);
+  }
+  if (keepHover) {
+    const row = [...els.body.children].find((node) => node.dataset.symbol === keepHover);
+    const quote = next.quotes.find((item) => item.symbol === keepHover);
+    if (row && quote) {
+      const cell = cells[keepHover] ?? { buy: '—', sell: '—', pct: '—', tone: 'flat', update: '—', updateStale: false };
+      scheduleQuoteTip(row, quote, cell, next.details?.[keepHover]);
+    }
   }
 }
 
@@ -312,6 +395,7 @@ function fillTaskbar(taskbar) {
 function fillDisplay(display, arrowMode) {
   if (!display) return;
   els.dispName.checked = !!display.name;
+  els.dispPct.checked = !!display.pct;
   const modes = state?.arrowModes ?? [];
   if (modes.length && els.dispArrow.options.length !== modes.length) {
     els.dispArrow.innerHTML = optionTags(modes.map((m) => ({ value: m.mode, text: m.text })), arrowMode);
@@ -426,6 +510,8 @@ els.save.addEventListener('click', () => {
 });
 
 function selectTab(mode) {
+  hoveredSymbol = null;
+  hideQuoteTip();
   const showSettings = mode === 'settings';
   els.viewDetail.hidden = showSettings;
   els.viewSettings.hidden = !showSettings;
@@ -439,6 +525,10 @@ window.gold.onMode(selectTab);
 
 els.dispName.addEventListener('change', () =>
   window.gold.setDisplay({ name: els.dispName.checked }).then((saved) => fillDisplay(saved.display, saved.arrowMode)),
+);
+
+els.dispPct.addEventListener('change', () =>
+  window.gold.setDisplay({ pct: els.dispPct.checked }).then((saved) => fillDisplay(saved.display, saved.arrowMode)),
 );
 
 // 涨跌两个勾选合成一个下拉框
@@ -482,6 +572,8 @@ els.body.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return;
   const row = event.target.closest('tr[data-symbol]');
   if (!row) return;
+  hoveredSymbol = null;
+  hideQuoteTip();
   const current = {
     row,
     startX: event.clientX,
@@ -543,6 +635,7 @@ els.body.addEventListener('pointercancel', endHold);
 els.notifyTest.addEventListener('click', () => window.gold.notifyTest());
 els.quit.addEventListener('click', () => window.gold.quit());
 
+window.addEventListener('scroll', hideQuoteTip, true);
 window.gold.onUpdate(applyState);
 // 悬浮球与任务栏文字都是 Windows 专属，macOS 用菜单栏本身就有的文字位
 window.gold.getCapabilities().then(async (caps) => {
@@ -550,7 +643,12 @@ window.gold.getCapabilities().then(async (caps) => {
     els.taskbarRow.hidden = false;
     els.taskbarTrendRow.hidden = false;
   }
-  if (caps.loginItem) els.loginRow.hidden = false;
+  if (caps.loginItemPlatform) {
+    els.loginRow.hidden = false;
+    els.loginOn.disabled = !caps.loginItem;
+    els.loginHint.textContent = caps.loginItemReason || '登录系统后自动运行 GoldSentry';
+    els.loginHint.classList.toggle('warn', !!caps.loginItemReason);
+  }
   if (!caps.ball) return;
   els.ballRow.hidden = false;
   els.ballScaleRow.hidden = false;

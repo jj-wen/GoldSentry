@@ -1,4 +1,15 @@
-import { app, BrowserWindow, Notification, Tray, ipcMain, nativeImage, powerMonitor, screen } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  nativeTheme,
+  Notification,
+  Tray,
+  ipcMain,
+  nativeImage,
+  powerMonitor,
+  screen,
+} from 'electron';
+import type { NativeImage } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
@@ -11,6 +22,7 @@ import {
   BALL_SCALE_MIN,
   backoffSeconds,
   ballSizeFor,
+  bankSessionAt,
   clampBallScale,
   clampIntoWorkArea,
   clampOpacity,
@@ -20,6 +32,7 @@ import {
   DEFAULT_TREND_SETTINGS,
   detectTaskbar,
   displayFromArrowMode,
+  feeCell,
   formatPct,
   formatPrice,
   formatQuoteCells,
@@ -42,6 +55,7 @@ import {
   showArrow,
   sources,
   spreadCell,
+  tradingHoursOf,
   TASKBAR_END_MARGIN,
   TREND_RANGE_ORDER,
   TREND_RANGE_TEXT,
@@ -52,6 +66,7 @@ import {
   type DisplayToggles,
   type FiredAlert,
   type HealthReport,
+  type PriceTone,
   type Quote,
   type QuoteCells,
   type Rect,
@@ -64,6 +79,8 @@ import {
   type TrendSparkline,
 } from '@goldsentry/core';
 import { watchFullscreen } from './fullscreen.ts';
+import { renderStatusStrip } from './status-renderer.ts';
+import type { StatusStripInput } from './status-renderer.ts';
 
 app.name = 'GoldSentry';
 
@@ -76,14 +93,31 @@ if (process.platform === 'win32') {
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 }
 
-/** 面板可选的轮询间隔；1 秒档容易触发上游风控，默认仍用 30 秒 */
-const ALLOWED_INTERVALS = [1, 2, 3, 5, 8, 10, 30, 60, 120, 300];
+/** 面板可选的轮询间隔；最密的 5 秒档仍偏快，默认用 30 秒 */
+const ALLOWED_INTERVALS = [5, 10, 30, 60, 120, 300, 600];
 
 let rulesFile = '';
 let storeFile = '';
 let settingsFile = '';
 let rules: AlertRule[] = [];
 let store: QuoteStore;
+
+/** 鼠标悬浮详情行时要展示的银行信息，全部在 core 里算好，面板只贴 */
+interface BankDetail {
+  name: string;
+  source: string;
+  basis: string;
+  hours: string;
+  hoursNote: string;
+  session: string;
+  sessionOpen: boolean;
+  sessionReason: string;
+  spreadText: string;
+  spreadNote: string;
+  fee: string;
+  feeNote: string;
+  quoteTime: string;
+}
 
 interface State {
   quotes: Quote[];
@@ -103,6 +137,7 @@ interface State {
   symbolOrder: string[];
   cells: Record<string, QuoteCells>;
   spreadCells: Record<string, SpreadCell>;
+  details: Record<string, BankDetail>;
   ruleKinds: Array<{ kind: RuleKind; text: string; unit: string }>;
   ruleRows: Array<{ symbol: string; kind: RuleKind; value: number | undefined; enabled: boolean }>;
   bark: Settings['bark'];
@@ -127,13 +162,14 @@ let state: State = {
   effectivePollSeconds: 30,
   failureStreak: 0,
   launchAtLogin: false,
-  display: { name: true, up: true, down: true },
+  display: { name: true, up: true, down: true, pct: false },
   arrowMode: 'both',
   arrowModes: ARROW_MODE_ORDER.map((mode) => ({ mode, text: ARROW_MODE_TEXT[mode] })),
   ballScale: { min: BALL_SCALE_MIN, max: BALL_SCALE_MAX },
   symbolOrder: [],
   cells: {},
   spreadCells: {},
+  details: {},
   ruleKinds: RULE_KIND_ORDER.map((kind) => ({ kind, text: RULE_KIND_TEXT[kind], unit: RULE_KIND_UNIT[kind] })),
   ruleRows: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
@@ -185,6 +221,40 @@ function buildCells(quotes: Quote[]): { cells: Record<string, QuoteCells>; sprea
     spreadCells[quote.symbol] = spreadCell(quote.spread, quote.symbol);
   }
   return { cells, spreadCells };
+}
+
+function buildBankDetails(quotes: Quote[]): { details: Record<string, BankDetail> } {
+  const details: Record<string, BankDetail> = {};
+  const now = Date.now();
+  for (const quote of quotes) {
+    const hours = tradingHoursOf(quote.symbol);
+    const session = bankSessionAt(quote.symbol, now);
+    const fee = feeCell(quote.symbol);
+    details[quote.symbol] = {
+      name: quote.name,
+      source: quote.sourceId === 'jd' ? '京东金融代销' : quote.sourceId === 'ccb' ? '建设银行公开行情' : quote.sourceId,
+      basis:
+        quote.basis === 'realtime'
+          ? '实时报价'
+          : quote.basis === 'dailyFix'
+            ? '每日 10:30 定价'
+            : quote.basis,
+      hours: hours?.text ?? '—',
+      hoursNote: hours?.note ?? '',
+      session: session.text,
+      sessionOpen: session.open,
+      sessionReason: session.reason,
+      spreadText: Number.isFinite(quote.spread) ? formatPrice(quote.spread) : '—',
+      spreadNote:
+        quote.spread > 0
+          ? '点差 = 买入价 − 卖出价'
+          : '上游只给单边价，点差恒为 0，不代表免费；请看服务费',
+      fee: fee.text,
+      feeNote: fee.note,
+      quoteTime: new Date(quote.quotedAt).toLocaleTimeString('zh-CN', { hour12: false }),
+    };
+  }
+  return { details };
 }
 
 function loadRules(): AlertRule[] {
@@ -302,6 +372,9 @@ function applyPrimarySymbol(symbol: string): void {
 }
 
 let tray: Tray | null = null;
+let trayLogo: NativeImage | null = null;
+/** 菜单栏图标当前表达的方向：logo=单色品牌图，up/down=彩色三角形 */
+let trayTone: 'logo' | 'up' | 'down' = 'logo';
 let panel: BrowserWindow | null = null;
 let lastTrayTitle = '';
 /** 面板刚创建时页面还没加载完，这时发 panel:mode 会被丢掉，右键首次打开会停在详情页 */
@@ -350,8 +423,12 @@ function createPanel(): BrowserWindow {
 
 type PanelAnchor = 'tray' | 'ball' | 'taskbar';
 
-/** 一个托盘图标不该有半条任务栏那么宽，超了说明拿到的不是图标位置 */
-const TRAY_ICON_MAX_WIDTH = 64;
+/**
+ * macOS 状态项带标题或图片后 getBounds 返回的是整块宽度（实测文字 66~109px、
+ * 图片 121px），不能按图标尺寸卡；Windows 托盘图标才是 16px 方块，
+ * 超过半条任务栏说明拿到的不是图标位置。
+ */
+const TRAY_ICON_MAX_WIDTH = process.platform === 'darwin' ? 360 : 64;
 
 function iconRect(): Rect | null {
   const bounds = tray?.getBounds();
@@ -399,9 +476,10 @@ function positionPanel(source: PanelAnchor): void {
   }
   const { workArea } = screen.getDisplayMatching(anchor);
   const rawX = Math.round(anchor.x + anchor.width / 2 - width / 2);
-  // macOS 菜单栏在屏幕顶，Windows 托盘在任务栏（屏幕底），面板要往相反方向弹
+  // macOS 菜单栏在屏幕顶，Windows 托盘在任务栏（屏幕底），面板要往相反方向弹。
+  // 顶部的贴住菜单栏下沿（锚点底边就是 workArea 顶边），底部留 6px 不压任务栏。
   const inBottomHalf = anchor.y + anchor.height / 2 > workArea.y + workArea.height / 2;
-  const rawY = Math.round(inBottomHalf ? anchor.y - height - 6 : anchor.y + anchor.height + 6);
+  const rawY = Math.round(inBottomHalf ? anchor.y - height - 6 : anchor.y + anchor.height);
   const pos = clampIntoWorkArea({ x: rawX, y: rawY, width, height }, workArea);
   panel.setPosition(pos.x, pos.y);
   console.log(
@@ -423,6 +501,7 @@ function pushState(): void {
     ...state,
     quotes,
     ...buildCells(quotes),
+    ...buildBankDetails(quotes),
     ...buildRuleModels(),
     ...buildUiModels(),
     trend: settings.trend.enabled ? series : null,
@@ -559,7 +638,7 @@ function saveBallPosition(): void {
 }
 
 /** 悬浮球与任务栏文字共用同一条"瞟一眼"数据；显示哪些片段由 settings.display 决定 */
-function readout(): { label: string; price: string; arrow: string; tone: string; mark: string } {
+function readout(): { label: string; price: string; pct: string; arrow: string; tone: PriceTone; mark: string } {
   const picked = primaryQuote();
   const pct = picked?.dayChangePct;
   // 颜色永远按真实涨跌（持平才白色）；开关只决定箭头出不出现
@@ -567,6 +646,10 @@ function readout(): { label: string; price: string; arrow: string; tone: string;
   return {
     label: settings.display.name ? (picked?.label ?? '—') : '',
     price: picked ? formatPrice(picked.buyPrice) : '—',
+    pct:
+      settings.display.pct && typeof pct === 'number' && Number.isFinite(pct)
+        ? formatPct(pct)
+        : '',
     arrow: showArrow(pct, settings.display) ? (tone === 'down' ? '▼' : '▲') : '',
     tone,
     mark: state.health.status === 'offline' ? '×' : state.health.status === 'degraded' ? '!' : '',
@@ -754,7 +837,18 @@ let launchAtLogin = false;
 
 /** 未打包时注册进系统的是 Electron 本体而不是 GoldSentry，开发态不提供这个开关 */
 function supportsLoginItem(): boolean {
-  return app.isPackaged && (process.platform === 'win32' || process.platform === 'darwin');
+  if (!app.isPackaged) return false;
+  if (process.platform === 'darwin') return !app.getPath('exe').startsWith('/Volumes/');
+  return process.platform === 'win32';
+}
+
+/** 开关不能用时把原因带回面板，别让用户以为点了没反应 */
+function loginItemReason(): string {
+  if (!app.isPackaged) return '开发模式不写入系统登录项，打包安装后可用';
+  if (process.platform === 'darwin' && app.getPath('exe').startsWith('/Volumes/')) {
+    return '请先把 GoldSentry 拖到「应用程序」文件夹，再开启开机自启';
+  }
+  return '';
 }
 
 function syncLoginItem(): void {
@@ -790,6 +884,7 @@ async function poll(): Promise<void> {
     state = {
       quotes,
       ...buildCells(quotes),
+      ...buildBankDetails(quotes),
       ...buildRuleModels(),
       ...buildUiModels(),
       rules,
@@ -835,14 +930,24 @@ function primaryQuote(): Quote | undefined {
   );
 }
 
-function updateTrayTitle(): void {
-  if (!tray) return;
-  const picked = primaryQuote();
-  const mark = state.health.status === 'offline' ? '×' : state.health.status === 'degraded' ? '!' : '';
-  const title = picked ? ` ${mark}${formatPrice(picked.buyPrice)}` : ` ${mark || '?'}--`;
-  const changed = title !== lastTrayTitle;
-  lastTrayTitle = title;
-  tray.setTitle(title);
+/**
+ * 方向与红绿只放在图标上：macOS 上涨红 ▲、下跌绿 ▼，文字保持系统白/黑；
+ * 关掉对应方向或持平时退回品牌图标。Windows 方向仍在文字里用 ▲▼ 表达。
+ */
+function applyTrayTone(picked: Quote | undefined): void {
+  if (!tray || !trayLogo) return;
+  const pct = picked?.dayChangePct;
+  const tone = showArrow(pct, settings.display) ? priceTone(pct) : 'flat';
+  const want = process.platform === 'darwin' && tone !== 'flat' ? tone : 'logo';
+  if (want === trayTone) return;
+  trayTone = want;
+  const image =
+    want === 'logo' ? trayLogo : nativeImage.createFromPath(join(__dirname, 'assets', `tray-${want}.png`));
+  tray.setImage(image);
+  console.log(`[tray] icon=${want} ${image.getSize().width}x${image.getSize().height} empty=${image.isEmpty()}`);
+}
+
+function updateTrayTooltip(picked: Quote | undefined): void {
   const priceLine = picked
     ? `${picked.name} 买入 ${formatPrice(picked.buyPrice)} · 卖出 ${formatPrice(picked.sellPrice)}${
         picked.dayChangePct !== undefined && Number.isFinite(picked.dayChangePct)
@@ -854,7 +959,77 @@ function updateTrayTitle(): void {
   const lines = [priceLine];
   if (state.health.reasons.length) lines.push(`数据源异常：${state.health.reasons.join('；')}`);
   else if (state.health.marketClosed) lines.push(`休市：${state.health.closedReason}`);
-  tray.setToolTip(lines.join('\n'));
+  tray?.setToolTip(lines.join('\n'));
+}
+
+let stripSignature = '';
+let stripJob: { signature: string; input: StatusStripInput } | null = null;
+let stripRendering = false;
+let stripFailed = false;
+
+/**
+ * 菜单栏标题只能由系统画成单色，Electron 也没法把托盘图标放到标题后面。
+ * 要「白字 + 末尾一个彩色三角」只能把整条内容画成图片当图标。
+ * 渲染失败时退回系统标题 + 左侧彩色三角，功能不受影响。
+ */
+function queueStatusStrip(input: StatusStripInput): void {
+  if (!tray || stripFailed) return;
+  const signature = JSON.stringify(input);
+  if (signature === stripSignature) return;
+  stripJob = { signature, input };
+  if (stripRendering) return;
+  stripRendering = true;
+  void pumpStatusStrip();
+}
+
+async function pumpStatusStrip(): Promise<void> {
+  try {
+    while (stripJob && tray) {
+      const job = stripJob;
+      stripJob = null;
+      const image = await renderStatusStrip(job.input);
+      if (!image) {
+        stripFailed = true;
+        stripJob = null;
+        if (trayLogo) tray.setImage(trayLogo);
+        updateTrayTitle();
+        return;
+      }
+      stripSignature = job.signature;
+      tray.setImage(image);
+      tray.setTitle('');
+      console.log(`[tray] strip=${image.getSize().width}x${image.getSize().height} ${JSON.stringify(job.input)}`);
+    }
+  } finally {
+    stripRendering = false;
+  }
+}
+
+function updateTrayTitle(): void {
+  if (!tray) return;
+  const picked = primaryQuote();
+  const view = readout();
+  updateTrayTooltip(picked);
+  if (process.platform === 'darwin' && !stripFailed) {
+    queueStatusStrip({
+      label: picked ? view.label : '',
+      price: picked ? view.price : '--',
+      pct: view.pct,
+      arrow: view.arrow,
+      mark: view.mark,
+      tone: view.tone,
+      dark: nativeTheme.shouldUseDarkColors,
+    });
+    return;
+  }
+  applyTrayTone(picked);
+  // 渲染失败/Windows：系统标题 + 左侧图标兜底，顺序是「名称 价格 ▲ 百分比」
+  const title = picked
+    ? ` ${view.mark}${[view.label, view.price, view.arrow, view.pct].filter(Boolean).join(' ')}`
+    : ` ${view.mark || '?'}--`;
+  const changed = title !== lastTrayTitle;
+  lastTrayTitle = title;
+  tray.setTitle(title);
   if (changed) console.log(`[tray] title="${title}" ${Notification.isSupported() ? '通知可用' : '通知不可用'}`);
 }
 
@@ -895,7 +1070,7 @@ if (!app.requestSingleInstanceLock()) {
     store = new QuoteStore(storeFile);
 
     // template 图是纯白剪影，只适配 macOS 菜单栏；Windows 任务栏是浅色底，要用彩色图标
-    const icon =
+    trayLogo =
       process.platform === 'darwin'
         ? (() => {
             const img = nativeImage.createFromPath(join(__dirname, 'assets', 'iconTemplate.png'));
@@ -905,7 +1080,7 @@ if (!app.requestSingleInstanceLock()) {
         : nativeImage
             .createFromPath(join(__dirname, 'assets', 'icon.png'))
             .resize({ width: 16, height: 16 });
-    tray = new Tray(icon);
+    tray = new Tray(trayLogo);
     tray.on('click', () => showPanel('detail'));
     tray.on('right-click', () => showPanel('settings'));
 
@@ -917,6 +1092,8 @@ if (!app.requestSingleInstanceLock()) {
     screen.on('display-metrics-changed', relayout);
     screen.on('display-removed', relayout);
     screen.on('display-added', relayout);
+    // 菜单栏文字是画出来的，系统深浅色切换后要按新底色重画
+    nativeTheme.on('updated', () => updateTrayTitle());
 
     powerMonitor.on('resume', () => void poll());
     syncLoginItem();
@@ -967,6 +1144,8 @@ ipcMain.handle('gold:capabilities', () => ({
   ball: supportsBall(),
   taskbar: supportsTaskbar(),
   loginItem: supportsLoginItem(),
+  loginItemPlatform: process.platform === 'win32' || process.platform === 'darwin',
+  loginItemReason: loginItemReason(),
 }));
 ipcMain.handle('gold:set-launch-at-login', (_event, enabled: unknown) => {
   settings.launchAtLogin = enabled === true;
@@ -1000,12 +1179,14 @@ ipcMain.handle('gold:set-order', (_event, symbols: unknown) => {
   // 面板拿到 state 直接重渲染，返回顺序数组会把渲染打断
   return state;
 });
-ipcMain.handle('gold:set-display', (_event, next: { name?: boolean; mode?: ArrowMode }) => {
+ipcMain.handle('gold:set-display', (_event, next: { name?: boolean; pct?: boolean; mode?: ArrowMode }) => {
   const patched = { ...settings.display };
   if (typeof next?.name === 'boolean') patched.name = next.name;
+  if (typeof next?.pct === 'boolean') patched.pct = next.pct;
   if (next?.mode !== undefined) Object.assign(patched, displayFromArrowMode(settings.display, next.mode));
   settings.display = normalizeDisplay(patched);
   saveSettings();
+  updateTrayTitle();
   pushBall();
   pushTaskbar();
   pushState();

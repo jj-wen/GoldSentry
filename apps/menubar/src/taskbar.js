@@ -2,6 +2,7 @@ const strip = document.getElementById('strip');
 const markEl = document.getElementById('mark');
 const symEl = document.getElementById('sym');
 const priceEl = document.getElementById('price');
+const pctEl = document.getElementById('pct');
 const arrowEl = document.getElementById('arrow');
 const sparkEl = document.getElementById('spark');
 
@@ -63,9 +64,11 @@ window.taskbar.onUpdate((data) => {
   markEl.textContent = data.mark ?? '';
   symEl.textContent = data.label ?? '—';
   priceEl.textContent = data.price ?? '—';
+  pctEl.hidden = !data.pct;
+  pctEl.textContent = data.pct ?? '';
   arrowEl.hidden = !data.arrow;
   arrowEl.textContent = data.arrow ?? '';
-  for (const node of [priceEl, arrowEl]) {
+  for (const node of [priceEl, pctEl, arrowEl]) {
     node.classList.remove('up', 'down');
     if (data.tone === 'up' || data.tone === 'down') node.classList.add(data.tone);
   }
@@ -74,7 +77,7 @@ window.taskbar.onUpdate((data) => {
     ? `单击打开面板 · ${data.spark.rangeText} ${data.spark.changeText}`
     : '单击打开面板 · 沿任务栏拖动可移位';
   document.body.dataset.ready = 'true';
-  const signature = `${data.mark}|${data.label}|${data.price}|${data.arrow}|${data.spark?.points?.length ?? 0}`;
+  const signature = `${data.mark}|${data.label}|${data.price}|${data.pct}|${data.arrow}|${data.spark?.points?.length ?? 0}`;
   if (signature !== lastSignature) {
     lastSignature = signature;
     reportSize();

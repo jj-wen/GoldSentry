@@ -2,14 +2,17 @@ const el = document.getElementById('ball');
 const markEl = document.getElementById('mark');
 const symEl = document.getElementById('sym');
 const priceEl = document.getElementById('price');
+const pctEl = document.getElementById('pct');
 const arrowEl = document.getElementById('arrow');
 
 window.ball.onUpdate((data) => {
   markEl.textContent = data.mark ?? '';
   symEl.textContent = data.label ?? '—';
   priceEl.textContent = data.price ?? '—';
+  pctEl.hidden = !data.pct;
+  pctEl.textContent = data.pct ?? '';
   arrowEl.textContent = data.arrow ?? '';
-  for (const node of [priceEl, arrowEl]) {
+  for (const node of [priceEl, pctEl, arrowEl]) {
     node.classList.remove('up', 'down');
     if (data.tone === 'up' || data.tone === 'down') node.classList.add(data.tone);
   }

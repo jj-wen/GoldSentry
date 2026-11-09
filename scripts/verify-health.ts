@@ -98,6 +98,7 @@ check('继续失效按 2 的幂拉长', backoffSeconds(30, BACKOFF_AFTER_FAILURE
 check('拉长有上限', backoffSeconds(30, 50) === BACKOFF_MAX_SECONDS);
 check('小间隔不会被上限吃掉', backoffSeconds(1, BACKOFF_AFTER_FAILURES) === 2);
 check('用户本来就设 5 分钟时不再拉长', backoffSeconds(300, BACKOFF_AFTER_FAILURES) === 300);
+check('用户设 10 分钟时降频不会反而调快', backoffSeconds(600, BACKOFF_AFTER_FAILURES) === 600 && backoffSeconds(600, 50) === 600);
 check('脏间隔退回默认而不是 NaN', backoffSeconds(Number.NaN, 0) === 30 && backoffSeconds(0, 0) === 30);
 check('脏失败次数不降频', backoffSeconds(30, Number.NaN) === 30);
 

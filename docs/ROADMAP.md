@@ -16,6 +16,10 @@
   - 方案：一台常驻小机器/云函数，交易时段内若收不到本机心跳（或京东报价时间戳停滞）就直接推 Bark。
   - 验收：拔掉本机网络 10 分钟内，手机收到"监控端失联"。
 - [ ] `P2` **数据源多路兜底**：六家同源（都走京东），一旦该接口改签名，全部失效。至少接一路独立源（上金所基准或另一渠道）做交叉校验，并在偏差过大时提示。
+- [ ] `P2` **江苏 / 浦发 / 农业 / 招商积存金**（2026-11-09 用户要求）
+  - 已核实：四家都不在京东代销批次里（`cfBatchGetLatestPriceInfo` 与 `queryCommonGoldProductInfoNew` 只覆盖浙商/民生/工商/广发/兴业/中信）；农行官网 `Gold/PublicProducts` 只有产品介绍，招行 `gold.cmbchina.com` 的黄金账户报价在登录后的页面，江苏/浦发同理，均无公开实时接口。
+  - 可选方案：接第三方付费行情 API（需评估稳定性与授权）、让用户手动录入当日价（只能算日频参考）、或暂不接入。**不要**为了凑数量去抓手机银行私有接口或伪造价格。
+  - 验收：单独适配器 + `npm run probe` 实测四家买卖价，健康判定按各自交易时段。
 - [x] `P2` **接口失效的降级体验**：连续 3 轮全部失效后按 2 的幂降频（封顶 300 秒），恢复/部分异常立刻归零；失效次数落盘。`core/backoff.ts` + `QuoteStore.failureStreak`，面板与 VS Code tooltip 都说明当前为什么变慢。验证：`verify:health` 15 条 + 真机断网/恢复 CDP 实测。
 - [x] `P1` **交易时段识别与休市健康态**：`core/market.ts` 按北京时间判断连续盘（日盘 09:00–15:30 接夜盘至次日 02:30，周末/节假日/节前停夜盘为休市）。休市期间报价冻结不判陈旧，健康态仍是 `ok`，面板/托盘/VS Code 显示「休市」及原因；更新列休市不标黄。节假日表来自上金所 2026 年休市公告，跨年前复核并更新 `MARKET_SCHEDULE_AS_OF`。验证：`verify:display` 25 条时段/更新列断言 + `verify:health` 7 条休市断言 + 周日真机 CDP。
 - [ ] `P3` **样本存储换 SQLite**：现在是单个 JSON 滚动 10 天，长期数据量上来后读写会变慢。
@@ -30,7 +34,7 @@
 - [ ] `P2` **Windows 托盘端**（进行中）
   - core 可直接复用，只需新增 Electron 外壳的分支（tray 图标、通知、开机自启）。
   - 已做：`menubar:dist:win` 出 portable；托盘面板按任务栏位置向上弹；非 macOS 用彩色托盘图标；任务栏文字与悬浮球（见上一条）。
-  - 未做/待验收：NSIS 已实机静默安装成功（16:20，退出码 0，快捷方式与卸载项齐全），但安装版与最新重建的 exe 均被 Windows Smart App Control 拦（未签名，策略 ID `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`，详见 AGENTS.md 陷阱表）；已改用本机 Electron 加载 asar 完成 CDP 验证；**托盘中文短名、涨跌、通知、任务栏文字的实际显示还没肉眼验收过**。开机自启已实现（面板开关 + `setLoginItemSettings`，portable 用 `PORTABLE_EXECUTABLE_FILE` 路径），但打包路径同样被 SAC 挡住没法真机拨开关，**待 SAC 处理后验收**。
+  - 未做/待验收：NSIS 已实机静默安装成功（16:20，退出码 0，快捷方式与卸载项齐全），但安装版与最新重建的 exe 均被 Windows Smart App Control 拦（未签名，策略 ID `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`，详见 AGENTS.md 陷阱表）；已改用本机 Electron 加载 asar 完成 CDP 验证；**托盘中文短名、涨跌、通知、任务栏文字的实际显示还没肉眼验收过**。开机自启已实现（面板开关 + `setLoginItemSettings`，portable 用 `PORTABLE_EXECUTABLE_FILE` 路径）；macOS 加了「必须从 Applications 启动」的保护，避免把登录项写到 dmg 挂载点，**待真机重启验收**；Windows 打包路径同样被 SAC 挡住没法真机拨开关，**待 SAC 处理后验收**。
   - 注意：pnpm 10 需把 `electron-winstaller` 加入 `onlyBuiltDependencies`。pnpm 12 已改读 `pnpm-workspace.yaml`，根 `package.json` 里的 `pnpm.onlyBuiltDependencies` 会被忽略并告警。
   - 验收：Windows 上托盘显示中文短名与涨跌，Bark 推送可用。
 - [ ] `P2` **浏览器插件（MV3）**
@@ -61,6 +65,8 @@
 - 两个数据源都是公开或逆向接口，字段随时可能变；每次发布前至少跑一次 `npm run probe`。
 - `core/store.ts` 的"当日首笔"基准受程序启动时刻影响（午后启动会把午后价当成当日基准），与接口自带涨跌幅并存时优先用接口值。
 - 面板渲染逻辑（`panel.js`）无类型检查，靠 `verify-vscode` 的同类逻辑间接覆盖。
+- 菜单栏标题是 canvas 画出来的位图（`apps/menubar/src/status-renderer.ts`），不是系统文字：字号写死 13px，辅助功能里的"增大菜单栏文字"不会跟着变；常驻一个隐藏渲染进程（约几十 MB）。只有"系统白字 + 末尾一个彩色三角"这种布局必须这样做——Electron 既不能给标题上色，也不能把托盘图片放到标题后面。
+- `apps/menubar/assets/icon.png` / `iconTemplate.png` / `iconTemplate@2x.png` 三个文件是坏的：解压后每行比声明宽度多 1 字节，Chromium 的 PNG 解码器直接判空（`nativeImage.isEmpty() === true`），所以菜单栏/Windows 托盘一直只有文字、没有品牌图标。方向图标（`tray-up/down`）是好的。需要重做一版 logo 再替换（只在渲染失败兜底时用到）。
 
 ## 开放问题（需要产品决策）
 

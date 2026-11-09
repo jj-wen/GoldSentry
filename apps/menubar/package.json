@@ -9,7 +9,7 @@
   "scripts": {
     "build:code": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/main.cjs && cp src/preload.cjs src/ball-preload.cjs src/taskbar-preload.cjs src/panel.html src/panel.css src/panel.js src/ball.html src/ball.css src/ball.js src/taskbar.html src/taskbar.css src/taskbar.js dist/ && rm -rf dist/assets && cp -r assets dist/assets",
     "start": "pnpm build:code && electron .",
-    "dist": "pnpm build:code && electron-builder --mac --arm64",
+    "dist": "pnpm build:code && electron-builder --mac --x64 --arm64",
     "dist:win": "pnpm build:code && electron-builder --win --x64"
   },
   "dependencies": {
@@ -42,11 +42,17 @@
         "LSUIElement": true
       }
     },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
     "win": {
       "target": [
         "portable",
         "nsis"
       ]
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
     },
     "nsis": {
       "oneClick": false,

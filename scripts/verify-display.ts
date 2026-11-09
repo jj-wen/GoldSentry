@@ -19,6 +19,8 @@ import {
   formatPct,
   formatQuoteCells,
   marketSessionAt,
+  bankSessionAt,
+  tradingHoursOf,
   normalizeDisplay,
   normalizeSymbolOrder,
   priceTone,
@@ -38,6 +40,7 @@ import {
   TREND_RANGE_ORDER,
   trendSparkline,
   updateAgeText,
+  parseBatchPrice,
 } from '../packages/core/src/index.ts';
 
 let failures = 0;
@@ -179,7 +182,7 @@ check(
 );
 
 // --- 显示内容开关：颜色看真实涨跌，箭头才看开关 ---
-const ALL_ON = { name: true, up: true, down: true };
+const ALL_ON = { name: true, up: true, down: true, pct: true };
 check('涨时红色', priceTone(1.5) === 'up');
 check('跌时绿色', priceTone(-1.5) === 'down');
 check('持平是白色（flat）', priceTone(0) === 'flat');
@@ -190,7 +193,9 @@ check('开关全开时箭头出现', showArrow(0.4, ALL_ON) && showArrow(-0.4, A
 check('持平不配箭头', !showArrow(0, ALL_ON) && !showArrow(undefined, ALL_ON));
 check('脏配置退回默认（全显示）', JSON.stringify(normalizeDisplay(undefined)) === JSON.stringify(DEFAULT_DISPLAY));
 check('非布尔值被丢弃', JSON.stringify(normalizeDisplay({ name: 'no', up: 1 })) === JSON.stringify(DEFAULT_DISPLAY));
-check('合法开关原样保留', JSON.stringify(normalizeDisplay({ name: false, up: false, down: true })) === JSON.stringify({ name: false, up: false, down: true }));
+check('合法开关原样保留', JSON.stringify(normalizeDisplay({ name: false, up: false, down: true, pct: true })) === JSON.stringify({ name: false, up: false, down: true, pct: true }));
+check('涨跌百分比默认关闭', DEFAULT_DISPLAY.pct === false && normalizeDisplay({}).pct === false);
+check('涨跌百分比只认布尔', normalizeDisplay({ pct: 'yes' }).pct === false && normalizeDisplay({ pct: true }).pct === true);
 
 // --- 面板单元格：金额与方向都由 core 出，外壳不许自己 toFixed ---
 const cells = formatQuoteCells({ buyPrice: 873.1, sellPrice: 872.6, dayChangePct: -0.31 });
@@ -213,9 +218,19 @@ check('点差说明写清是买入减卖出', withSpread.note.includes('买入�
 const feeOnly = spreadCell(0, 'ZS');
 check('点差为 0 退回服务费', feeOnly.text === '0%/0.4%' && feeOnly.basis === 'fee', JSON.stringify(feeOnly));
 check('服务费说明带核实日期', feeOnly.note.includes('截至 2026-11-05'), feeOnly.note);
-const unknown = spreadCell(0, 'MS');
+const unknown = spreadCell(0, 'GF');
 check('两边都给不出数字时显示 —', unknown.text === '—' && unknown.basis === 'fee', JSON.stringify(unknown));
 check('未知时 tooltip 仍解释原因', unknown.note.includes('以银行 App 为准'), unknown.note);
+const spreadFee = spreadCell(0, 'MS');
+check(
+  '点差为 0 时用人工核实的元/克点差兜底',
+  spreadFee.text === '3.80元' && spreadFee.basis === 'fee',
+  JSON.stringify(spreadFee),
+);
+check('人工点差说明写清来源', spreadFee.note.includes('用户核实'), spreadFee.note);
+check('中信人工点差为 2.7 元/克', spreadCell(0, 'ZX').text === '2.70元', spreadCell(0, 'ZX').text);
+check('只查到区间的点差原样显示', spreadCell(0, 'JJC').text === '4–6元', spreadCell(0, 'JJC').text);
+check('工商按对比表显示买卖费率', spreadCell(0, 'GS').text === '0.2%/0.5%', spreadCell(0, 'GS').text);
 check('点差缺失也退回服务费', spreadCell(undefined, 'ZS').text === '0%/0.4%');
 check('点差为负（脏数据）不显示成点差', spreadCell(-1, 'ZS').basis === 'fee');
 
@@ -232,7 +247,7 @@ check('阈值内不标过期', feeCell('ZS', beforeDeadline).stale === false && 
 check('恰好到阈值当天还不算过期', feeCell('ZS', atDeadline).stale === false);
 check('超过阈值标过期并带 ⚠', feeCell('ZS', overdue).stale === true && feeCell('ZS', overdue).text === '0%/0.4% ⚠');
 check('过期说明写清天数与去处', feeCell('ZS', overdue).note.includes(`${FEE_STALE_DAYS + 1} 天`) && feeCell('ZS', overdue).note.includes('银行 App'));
-check('本来就查不到数字的不标黄（避免噪音）', feeCell('MS', overdue).stale === false && feeCell('MS', overdue).text === '—');
+check('本来就查不到数字的不标黄（避免噪音）', feeCell('GF', overdue).stale === false && feeCell('GF', overdue).text === '—');
 check('未收录的品种不标黄', feeCell('NOPE', overdue).stale === false);
 check('点差口径不受费率过期影响', spreadCell(3.5, 'ZS', overdue).stale === false && spreadCell(3.5, 'ZS', overdue).basis === 'spread');
 check('退回费率口径时把过期透传给面板', spreadCell(0, 'ZS', overdue).stale === true);
@@ -246,6 +261,21 @@ check(
   '按用户顺序重排',
   JSON.stringify(applySymbolOrder(rows, ['GS', 'ZS']).map((r) => r.symbol)) === JSON.stringify(['GS', 'ZS', 'MS']),
 );
+const shuffledBatch = parseBatchPrice({
+  resultData: {
+    code: '00000000',
+    data: [
+      { productSku: '2045976593', buyPrice: '1', sellPrice: '1', time: '1' },
+      { productSku: '21001001000001', buyPrice: '1', sellPrice: '1', time: '1' },
+      { productSku: '1961543816', buyPrice: '1', sellPrice: '1', time: '1' },
+    ],
+  },
+});
+check(
+  '京东返回乱序时按声明顺序输出，民生第二',
+  JSON.stringify(shuffledBatch.map((q) => q.symbol)) === JSON.stringify(['ZS', 'MS', 'ZX']),
+  JSON.stringify(shuffledBatch.map((q) => q.symbol)),
+);
 check('空顺序保持原样', JSON.stringify(applySymbolOrder(rows, []).map((r) => r.symbol)) === JSON.stringify(['ZS', 'GS', 'MS']));
 check(
   '新品种不会因为没排过而消失',
@@ -258,7 +288,7 @@ check('返回的是新数组，不改原列表', (() => {
 })());
 
 // --- 涨跌箭头：一个下拉框对应两个布尔，老配置不迁移 ---
-const AS = (up: boolean, down: boolean) => ({ name: true, up, down });
+const AS = (up: boolean, down: boolean) => ({ name: true, up, down, pct: false });
 check('两个都开 = 涨跌都显示', arrowModeOf(AS(true, true)) === 'both');
 check('只开上涨 = 只显示上涨', arrowModeOf(AS(true, false)) === 'up');
 check('只开下跌 = 只显示下跌', arrowModeOf(AS(false, true)) === 'down');
@@ -268,9 +298,9 @@ check(
   ARROW_MODE_ORDER.every((mode) => arrowModeOf(displayFromArrowMode(AS(true, true), mode)) === mode),
 );
 check(
-  '切换箭头模式不动品种名开关',
-  JSON.stringify(displayFromArrowMode({ name: false, up: true, down: true }, 'none')) ===
-    JSON.stringify({ name: false, up: false, down: false }),
+  '切换箭头模式不动品种名与百分比开关',
+  JSON.stringify(displayFromArrowMode({ name: false, up: true, down: true, pct: true }, 'none')) ===
+    JSON.stringify({ name: false, up: false, down: false, pct: true }),
 );
 check('箭头模式与颜色互不影响', priceTone(-1) === 'down' && !showArrow(-1, AS(true, false)));
 
@@ -316,6 +346,26 @@ check('节日凌晨没有前一晚夜盘', session('2026-09-30T17:00:00Z').open 
 check('节日最后一天凌晨仍休市', session('2026-10-07T17:00:00Z').open === false && session('2026-10-07T17:00:00Z').reason === '国庆休市');
 check('节后首日 09:00 恢复', session('2026-10-08T01:00:00Z').open === true);
 check('调休补班的周六照样休市', session('2026-10-10T02:00:00Z').open === false && session('2026-10-10T02:00:00Z').reason === '周末休市');
+
+// --- 单家银行收盘点：工商 22:30，浙商 02:30，其余 02:00 ---
+const bankAt = (symbol: string, iso: string) => bankSessionAt(symbol, at(iso));
+check('工商交易时段文案', tradingHoursOf('GS')?.text === '周一 09:10–周五 22:30', tradingHoursOf('GS')?.text);
+check('浙商交易时段文案', tradingHoursOf('ZS')?.text === '周一 09:00–周六 02:30', tradingHoursOf('ZS')?.text);
+check('广发交易时段文案', tradingHoursOf('GF')?.text === '周一 09:00–周六 02:00', tradingHoursOf('GF')?.text);
+check('周五 10:30 各行都开市', bankAt('GS', '2026-11-06T02:30:00Z').open && bankAt('MS', '2026-11-06T02:30:00Z').open);
+check('工商 09:05 还没开市', bankAt('GS', '2026-11-06T01:05:00Z').open === false && bankAt('GS', '2026-11-06T01:05:00Z').text === '未开盘');
+check('民生 09:05 还没开市', bankAt('MS', '2026-11-06T01:05:00Z').open === false);
+check('浙商 09:05 已开市', bankAt('ZS', '2026-11-06T01:05:00Z').open === true);
+check('工商 22:31 已收盘', bankAt('GS', '2026-11-06T14:31:00Z').open === false && bankAt('GS', '2026-11-06T14:31:00Z').text === '已收盘');
+check('同一时刻浙商仍在交易', bankAt('ZS', '2026-11-06T14:31:00Z').open === true);
+check('广发午后不中断', bankAt('GF', '2026-11-06T08:00:00Z').open === true);
+check('民生凌晨 01:30 仍在交易', bankAt('MS', '2026-11-06T17:30:00Z').open === true);
+check('民生凌晨 02:15 已收盘', bankAt('MS', '2026-11-06T18:15:00Z').open === false);
+check('浙商凌晨 02:15 仍在交易', bankAt('ZS', '2026-11-06T18:15:00Z').open === true);
+check('周末所有银行休市', bankAt('ZS', '2026-11-07T02:00:00Z').open === false && bankAt('GS', '2026-11-07T02:00:00Z').open === false);
+check('节假日所有银行休市', bankAt('GS', '2026-10-01T02:00:00Z').text === '休市');
+check('建行积存金有自己的时段文案', tradingHoursOf('JJC')?.text === '周一 09:10–周六 02:30', tradingHoursOf('JJC')?.text);
+check('建行账户金标注连续盘', tradingHoursOf('AU9999')?.continuous === true && tradingHoursOf('AU9999')?.text.includes('连续盘'));
 
 // --- 更新列：休市时报价不动不标黄 ---
 const OPEN_NOW = at('2026-11-06T02:00:00Z');
