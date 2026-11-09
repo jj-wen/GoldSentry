@@ -32,6 +32,10 @@
       "package.json"
     ],
     "afterPack": "scripts/after-pack.cjs",
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
+    ],
     "mac": {
       "category": "public.app-category.finance",
       "target": [
@@ -44,7 +48,8 @@
       }
     },
     "dmg": {
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "format": "UDBZ"
     },
     "win": {
       "target": [
