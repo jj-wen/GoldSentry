@@ -18,7 +18,7 @@
 
 ## 下载与安装
 
-安装包发布在 [GitHub Releases](https://github.com/jj-wen/GoldSentry/releases)。
+安装包发布在公开仓库 [GoldSentry-release Releases](https://github.com/jj-wen/GoldSentry-release/releases)。本仓库为私有源码仓库。
 
 ### macOS
 
@@ -51,7 +51,7 @@
 
 | 形态 | 状态 | 说明 |
 |---|---|---|
-| Mac 菜单栏 App | 可运行，出未签名 `.dmg`（arm64 + x64） | 托盘实时价、六家银行对比、到价提醒、原生通知 + Bark 推送、开机自启 |
+| Mac 菜单栏 App | 可运行，出 ad-hoc 签名 `.dmg`（arm64 + x64） | 托盘实时价、六家银行对比、到价提醒、原生通知 + Bark 推送、开机自启 |
 | Windows 托盘 App | 可运行，出 portable + NSIS（未签名） | 托盘实时价、**任务栏文字**（TrafficMonitor 式贴附，全屏应用时自动隐藏）、**任务栏迷你走势**、**可调透明度悬浮球**、到价提醒、Bark 推送、开机自启 |
 | VS Code 扩展 | 可运行 | 状态栏实时价、左键 QuickPick 对比表、4 个命令、提醒、Bark 推送 |
 | 浏览器插件 | 未开始 | 核心可直接复用，只差外壳 |
