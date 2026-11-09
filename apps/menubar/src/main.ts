@@ -1069,17 +1069,24 @@ if (!app.requestSingleInstanceLock()) {
     settings = loadSettings();
     store = new QuoteStore(storeFile);
 
-    // template 图是纯白剪影，只适配 macOS 菜单栏；Windows 任务栏是浅色底，要用彩色图标
+    // template 图是纯黑剪影，只适配 macOS 菜单栏；Windows 任务栏是浅色底，要用彩色图标
     trayLogo =
       process.platform === 'darwin'
         ? (() => {
-            const img = nativeImage.createFromPath(join(__dirname, 'assets', 'iconTemplate.png'));
+            const img = nativeImage.createEmpty();
+            for (const [scaleFactor, file] of [
+              [1, 'iconTemplate.png'],
+              [2, 'iconTemplate@2x.png'],
+            ] as const) {
+              img.addRepresentation({
+                scaleFactor,
+                buffer: readFileSync(join(__dirname, 'assets', file)),
+              });
+            }
             img.setTemplateImage(true);
             return img;
           })()
-        : nativeImage
-            .createFromPath(join(__dirname, 'assets', 'icon.png'))
-            .resize({ width: 16, height: 16 });
+        : nativeImage.createFromPath(join(__dirname, 'assets', 'tray-glyph.png'));
     tray = new Tray(trayLogo);
     tray.on('click', () => showPanel('detail'));
     tray.on('right-click', () => showPanel('settings'));
