@@ -33,7 +33,7 @@
 
 ### Windows
 
-- 安装版：`GoldSentry-Setup-1.0.2-x64.exe`，双击安装，可选安装目录。
+- 安装版：`GoldSentry-Setup-1.0.2-x64.exe`，双击安装，可选安装目录。安装或卸载时会自动结束正在运行的 GoldSentry，不用先手动退出。
 - 便携版：`GoldSentry-1.0.2-x64-portable.exe`，无需安装，双击运行。
 - 未签名应用会触发 SmartScreen：点「更多信息 → 仍要运行」。如果系统启用了 **Smart App Control**，可能直接拦截未签名 exe，需要关闭 SAC 或使用代码签名证书（详见下方“常见坑”）。
 - **开机自启**：面板「设置 → 开机自启」勾选。安装版注册安装后的 exe；便携版注册原始便携 exe 路径，不使用临时解压目录。

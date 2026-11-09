@@ -63,7 +63,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "include": "scripts/nsis-custom.nsh"
     }
   }
 }
