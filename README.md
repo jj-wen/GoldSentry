@@ -18,7 +18,7 @@
 
 ## 下载与安装
 
-安装包发布在公开仓库 [GoldSentry-release Releases](https://github.com/jj-wen/GoldSentry-release/releases)。本仓库为私有源码仓库。
+安装包发布在公开仓库 [GoldSentry-release Releases](https://github.com/jj-wen/GoldSentry/releases)。本仓库为私有源码仓库。
 
 ### macOS
 
