@@ -863,12 +863,16 @@ function taskbarInfo(): TaskbarInfo | null {
 }
 
 function layoutTaskbar(): void {
-  const win = taskbarWin;
-  if (!win || win.isDestroyed()) return;
   if (!settings.taskbar.enabled) {
-    if (win.isVisible()) win.hide();
+    if (taskbarWin && !taskbarWin.isDestroyed() && taskbarWin.isVisible()) taskbarWin.hide();
     return;
   }
+  // 渲染进程崩溃或被系统关掉后，这里自愈重建，不让文字永久消失
+  if (!taskbarWin || taskbarWin.isDestroyed()) {
+    taskbarWin = createTaskbar();
+    return;
+  }
+  const win = taskbarWin;
   const info = taskbarInfo();
   if (!info) {
     // 任务栏自动隐藏时贴附窗口会悬在半空，跟着藏起来；每轮轮询会再试
@@ -1258,7 +1262,12 @@ if (!app.requestSingleInstanceLock()) {
     // 菜单栏文字是画出来的，系统深浅色切换后要按新底色重画
     nativeTheme.on('updated', () => updateTrayTitle());
 
-    powerMonitor.on('resume', () => void poll());
+    // 休眠期间探针可能被杀，醒来先按"全屏结束"恢复文字，等探针重新上报
+    powerMonitor.on('resume', () => {
+      fullscreenMonitors = [];
+      layoutTaskbar();
+      void poll();
+    });
     syncLoginItem();
     void poll();
     restartTimer();

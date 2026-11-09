@@ -16,6 +16,7 @@
 
 ### 修复
 
+- **Windows 退出全屏后任务栏文字偶发不恢复（1.0.3）**：探针以前只在结果变化时输出，PowerShell 被杀/卡住后主进程会一直拿着“有全屏”的旧状态；全屏应用退出也可能留下同屏的全屏尺寸幽灵窗口。现在探针每秒输出一行心跳，主进程 15 秒收不到数据就按全屏结束恢复文字并重启探针；探针退出/启动失败也会先恢复再重启。全屏判定新增前台过滤：不在前台且与前台窗口同屏的全屏尺寸窗口不再算数，副屏全屏仍按显示器正常隐藏。任务栏窗口被销毁时下一次 layout 自动重建，系统休眠唤醒时清空全屏状态。验证：esbuild bundle 通过、`verify:all` 全绿；**Windows 上的全屏/退出全屏行为需要真机确认**。
 - **Windows 安装/卸载不再询问“程序正在运行”**：electron-builder 默认的 `CHECK_APP_RUNNING` 会弹确认框，必须先手动退出。新增 `scripts/nsis-custom.nsh` 覆盖 `customCheckAppRunning`，安装和卸载前用 `taskkill /F /T /IM GoldSentry.exe` 静默结束主进程与 renderer/GPU 子进程，再直接覆盖文件；安装完成后照常启动新版。验证：先放 `!error` 做包含性验证，确认 NSIS 编译读取到该 nsh 后再正式出包。
 - **安装包瘦身**：`electronLanguages` 只保留 `en-US` / `zh-CN`，Windows `locales` 从 49MB 降到两包，mac 框架内语言包从 220 个降到 5 个；dmg 改用 `UDBZ`（bzip2）压缩。四个包分别从 121/128/110/122MB 降到 109/115/103/113MB（十进制，约 −7%~−10%）。验证：dmg 内 app 的 `--verify --deep --strict` 通过，语言目录只剩中英文，裁剪后的包启动正常。
 - **macOS 安装包改为 ad-hoc 签名**：未签名的 bundle 被微信/AirDrop 打上 quarantine 后，Gatekeeper 会直接报“已损坏，应移到废纸篓”，右键打开也过不去。新增 `apps/menubar/scripts/after-pack.cjs`，在 `afterPack` 阶段对 `.app` 执行 `codesign --force --deep --sign -` 并做 `--verify --deep --strict`；仍不公证，首次启动提示会退为“无法验证开发者”，可右键打开。验证：arm64 dir 构建产物签名有效（`Identifier=com.goldsentry.menubar`、Sealed Resources v2），启动正常；系统弹窗文案无法自动验证，需肉眼确认。

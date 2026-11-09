@@ -73,7 +73,7 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 | macOS 从 dmg 挂载目录开启开机自启，重启后路径失效 | `setLoginItemSettings` 可能把 `/Volumes/GoldSentry/...` 写进登录项 | `supportsLoginItem()` 检测 `app.getPath('exe').startsWith('/Volumes/')`；面板禁用并提示先拖进「应用程序」 |
 | 开发态拨「开机自启」注册进去的是 Electron 本体 | `app.isPackaged === false` 时也会走系统 API | 开发态显示开关但禁用并说明原因；只在打包后的 mac/win 调 `setLoginItemSettings` |
 | 全屏看视频时任务栏文字仍压在画面上 | 全屏应用的 `display.bounds` / `workArea` 不变，`detectTaskbar` 仍认为任务栏存在；`SHQueryUserNotificationState` 是整机全局状态（副屏全屏也会报繁忙），不能用来决定该隐藏哪一块 | `apps/menubar/src/fullscreen.ts` 用常驻 PowerShell 探针枚举可见且有标题的顶层窗口，把「窗口矩形≈所在显示器矩形」的显示器交给 `core/taskbar.ts` 的 `coversTaskbar`；只有全屏显示器盖住任务栏贴纸那块才隐藏，改这块先跑 `verify:display` |
-| 退出全屏后任务栏文字再也不回来 | 枚举时把 DWM 已隐藏（`DWMWA_CLOAKED`）的窗口和桌面窗口当成了全屏：本机 `TextInputHost` 的「Windows 默认锁屏界面」`IsWindowVisible=true`、矩形正好 1920×1080，`Program Manager` 也会命中；全屏集合永远非空，探针就不再输出变化 | 探针必须跳过 `DwmGetWindowAttribute(hwnd, 14) != 0` 的窗口，以及 `Progman` / `WorkerW` / `Shell_TrayWnd` / `Shell_SecondaryTrayWnd` 这些壳类名；验证时临时忽略 Chrome 进程，全屏集合应为空 |
+| 退出全屏后任务栏文字再也不回来 | 枚举时把 DWM 已隐藏（`DWMWA_CLOAKED`）的窗口和桌面窗口当成了全屏；或探针进程被杀/卡住后主进程一直拿着旧的“有全屏”状态；或全屏应用退出留下同屏幽灵窗口 | 探针跳过 `DwmGetWindowAttribute(hwnd, 14) != 0`、壳类名，以及“不在前台且与前台同屏”的全屏尺寸窗口；探针每秒输出心跳，主进程 15 秒无数据就恢复文字并重启，退出/启动失败也先恢复；任务栏窗口被销毁要自愈重建 |
 | 悬浮球放大后拖动比鼠标快 | `setZoomFactor` 放大页面后，1 个 CSS 像素 = scale 个屏幕像素，`movementX/Y` 是 CSS 像素 | `ball:move-by` 里把增量乘回 `settings.ball.scale` 再 `setPosition` |
 | 面板长按拖拽排序"没反应" | 计时未到就移动被判定成普通手势并取消了长按 | 长按计时期间不要取消，到点且仍按住就进入拖拽并用最新指针位置排一次；进入前的移动要抑制随后的 click，否则会误改主显品种 |
 | 托盘右键不触发设置，弹的是菜单 | `tray.setContextMenu()` 会抢占 right-click 事件 | 需要右键自定义行为时不要设 contextMenu，把菜单项搬进面板；`tray.on('right-click', ...)` 才会生效 |

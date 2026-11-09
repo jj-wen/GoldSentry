@@ -22,7 +22,7 @@
 
 ### macOS
 
-- Apple Silicon（M1/M2/M3/M4）下载 `GoldSentry-1.0.2-arm64.dmg`；Intel 下载 `GoldSentry-1.0.2-x64.dmg`。
+- Apple Silicon（M1/M2/M3/M4）下载 `GoldSentry-1.0.3-arm64.dmg`；Intel 下载 `GoldSentry-1.0.3-x64.dmg`。
 - 打开 dmg，把 **GoldSentry** 拖进「应用程序」文件夹，再从应用程序启动。
 - 当前只有 ad-hoc 签名、未公证：首次启动请右键 → **打开**；若被系统拦截，去「系统设置 → 隐私与安全性」点 **仍要打开**。
 - 如果提示“应用已损坏”（多见于从微信/AirDrop 传来的包），在终端执行：
@@ -33,8 +33,8 @@
 
 ### Windows
 
-- 安装版：`GoldSentry-Setup-1.0.2-x64.exe`，双击安装，可选安装目录。安装或卸载时会自动结束正在运行的 GoldSentry，不用先手动退出。
-- 便携版：`GoldSentry-1.0.2-x64-portable.exe`，无需安装，双击运行。
+- 安装版：`GoldSentry-Setup-1.0.3-x64.exe`，双击安装，可选安装目录。安装或卸载时会自动结束正在运行的 GoldSentry，不用先手动退出。
+- 便携版：`GoldSentry-1.0.3-x64-portable.exe`，无需安装，双击运行。
 - 未签名应用会触发 SmartScreen：点「更多信息 → 仍要运行」。如果系统启用了 **Smart App Control**，可能直接拦截未签名 exe，需要关闭 SAC 或使用代码签名证书（详见下方“常见坑”）。
 - **开机自启**：面板「设置 → 开机自启」勾选。安装版注册安装后的 exe；便携版注册原始便携 exe 路径，不使用临时解压目录。
 
