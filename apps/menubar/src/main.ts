@@ -11,7 +11,7 @@ import {
 } from 'electron';
 import type { NativeImage } from 'electron';
 import { join } from 'node:path';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
   applySymbolOrder,
@@ -34,7 +34,6 @@ import {
   clampIntoWorkArea,
   clampOpacity,
   compileRules,
-  coversTaskbar,
   DEFAULT_DISPLAY,
   DEFAULT_TREND_SETTINGS,
   detectTaskbar,
@@ -90,7 +89,7 @@ import {
   type TrendSettings,
   type TrendSparkline,
 } from '@goldsentry/core';
-import { watchFullscreen } from './fullscreen.ts';
+import { watchTaskbarCoverage } from './fullscreen.ts';
 import { renderStatusStrip } from './status-renderer.ts';
 import type { StatusStripInput } from './status-renderer.ts';
 
@@ -112,6 +111,7 @@ let rulesFile = '';
 let storeFile = '';
 let settingsFile = '';
 let calcFile = '';
+let taskbarLogFile = '';
 let rules: AlertRule[] = [];
 let calcRecords: CalcRecord[] = [];
 let store: QuoteStore;
@@ -821,32 +821,77 @@ const TASKBAR_MAX_SIZE = 400;
 let taskbarWin: BrowserWindow | null = null;
 let taskbarContent = { width: TASKBAR_DEFAULT_WIDTH, height: 22 };
 let taskbarEdge: string | null = null;
-let stopFullscreenWatch: (() => void) | null = null;
-let fullscreenMonitors: Rect[] = [];
+let taskbarRecreateTimer: ReturnType<typeof setTimeout> | undefined;
+let taskbarLogState = '';
+let taskbarLogAt = 0;
+let stopCoverageWatch: (() => void) | null = null;
+let coveredTaskbars: Rect[] = [];
 
-/** 全屏视频/游戏时任务栏被盖住，workArea 却还保留任务栏的保留区；只能枚举前台窗口问系统 */
-function syncFullscreenWatch(): void {
+/** 任务栏贴纸偶发"窗口还在但不再绘制"，留一份隐藏原因日志，下次直接看是哪种 */
+function logTaskbar(message: string): void {
+  if (!taskbarLogFile || !supportsTaskbar()) return;
+  const line = `${new Date().toISOString()} ${message}\n`;
+  try {
+    let size = 0;
+    try {
+      size = statSync(taskbarLogFile).size;
+    } catch {
+      size = 0;
+    }
+    if (size > 256 * 1024) writeFileSync(taskbarLogFile, line);
+    else appendFileSync(taskbarLogFile, line);
+  } catch {
+    // 日志失败不能影响贴纸本身
+  }
+}
+
+/** 渲染进程崩溃/无响应/加载失败时整窗重建，比 hide/show 更彻底 */
+function rebuildTaskbar(reason: string): void {
+  if (!supportsTaskbar() || !app.isReady() || !settings.taskbar.enabled) return;
+  logTaskbar(`重建窗口：${reason}`);
+  if (taskbarRecreateTimer) return;
+  const win = taskbarWin;
+  taskbarWin = null;
+  taskbarEdge = null;
+  taskbarLogState = '';
+  if (win && !win.isDestroyed()) win.destroy();
+  taskbarRecreateTimer = setTimeout(() => {
+    taskbarRecreateTimer = undefined;
+    layoutTaskbar();
+  }, 500);
+}
+
+/** 全屏视频/游戏会盖住任务栏；workArea 还保留任务栏的保留区，只能直接问系统谁在最上层 */
+function syncCoverageWatch(): void {
   if (!supportsTaskbar()) return;
   if (!settings.taskbar.enabled) {
-    stopFullscreenWatch?.();
-    stopFullscreenWatch = null;
-    fullscreenMonitors = [];
+    stopCoverageWatch?.();
+    stopCoverageWatch = null;
+    coveredTaskbars = [];
     return;
   }
-  if (stopFullscreenWatch) return;
-  const watch = watchFullscreen((rects) => {
-    fullscreenMonitors = rects;
-    console.log(`[fullscreen] ${rects.length ? `全屏覆盖 ${rects.length} 块显示器` : '全屏结束'}`);
+  if (stopCoverageWatch) return;
+  const watch = watchTaskbarCoverage((rects) => {
+    coveredTaskbars = rects;
+    console.log(`[taskbar] ${rects.length ? `任务栏被盖住 ${rects.length} 块` : '任务栏可见'}`);
     layoutTaskbar();
   });
-  stopFullscreenWatch = () => watch.stop();
+  stopCoverageWatch = () => watch.stop();
 }
 
 app.on('will-quit', () => {
-  stopFullscreenWatch?.();
-  stopFullscreenWatch = null;
+  stopCoverageWatch?.();
+  stopCoverageWatch = null;
+  if (taskbarRecreateTimer) clearTimeout(taskbarRecreateTimer);
+  taskbarRecreateTimer = undefined;
   stopBallDrag(false);
   stopTaskbarDrag(false);
+});
+
+// GPU 进程退出后透明置顶窗口会一直空白，必须重建才能重新绘制
+app.on('child-process-gone', (_event, details) => {
+  logTaskbar(`子进程退出：${details.type} ${details.reason} (${details.exitCode})`);
+  if (details.type === 'GPU') rebuildTaskbar('GPU 进程退出');
 });
 
 /** TrafficMonitor 式贴附：Electron 嵌不进 Shell_TrayWnd，就用置顶透明窗口盖在任务栏上 */
@@ -865,13 +910,23 @@ function taskbarInfo(): TaskbarInfo | null {
   return null;
 }
 
+/** 探针报的是 Shell_TrayWnd 自己的矩形，按中心点匹配，容忍 DPI 取整差 */
+function sameTaskbar(a: Rect, b: Rect): boolean {
+  return (
+    Math.abs(a.x + a.width / 2 - (b.x + b.width / 2)) <= 16 &&
+    Math.abs(a.y + a.height / 2 - (b.y + b.height / 2)) <= 16
+  );
+}
+
 function layoutTaskbar(): void {
+  if (!supportsTaskbar()) return;
   if (!settings.taskbar.enabled) {
     if (taskbarWin && !taskbarWin.isDestroyed() && taskbarWin.isVisible()) taskbarWin.hide();
     return;
   }
   // 渲染进程崩溃或被系统关掉后，这里自愈重建，不让文字永久消失
   if (!taskbarWin || taskbarWin.isDestroyed()) {
+    if (taskbarRecreateTimer) return;
     taskbarWin = createTaskbar();
     return;
   }
@@ -880,10 +935,14 @@ function layoutTaskbar(): void {
   if (!info) {
     // 任务栏自动隐藏时贴附窗口会悬在半空，跟着藏起来；每轮轮询会再试
     if (win.isVisible()) win.hide();
+    logTaskbarState('未检测到任务栏（自动隐藏或几何异常）');
     return;
   }
-  if (fullscreenMonitors.some((monitor) => coversTaskbar(monitor, info.rect))) {
+  // 只有探针确认"任务栏自己的位置被别的窗口盖住"才隐藏；最大化窗口不在此列
+  const covered = coveredTaskbars.find((rect) => sameTaskbar(rect, info.rect));
+  if (covered) {
     if (win.isVisible()) win.hide();
+    logTaskbarState(`任务栏被盖住（${covered.x},${covered.y} ${covered.width}x${covered.height}）`);
     return;
   }
   const rect = placeOnTaskbar(taskbarContent, info, settings.taskbar.offset, TASKBAR_END_MARGIN);
@@ -896,7 +955,13 @@ function layoutTaskbar(): void {
   ) {
     win.setBounds(rect);
   }
-  if (!win.isVisible()) win.showInactive();
+  // 全屏应用/系统弹窗退出后 z-order 可能被压下去，每轮都重新声明置顶
+  win.setAlwaysOnTop(true, 'screen-saver');
+  if (!win.isVisible()) {
+    win.showInactive();
+    win.moveTop();
+  }
+  logTaskbarState(`显示 ${rect.x},${rect.y} ${rect.width}x${rect.height} ${info.edge}`);
   if (taskbarEdge !== info.edge) {
     taskbarEdge = info.edge;
     win.webContents.send('taskbar:layout', {
@@ -904,6 +969,15 @@ function layoutTaskbar(): void {
       vertical: info.edge === 'left' || info.edge === 'right',
     });
   }
+}
+
+function logTaskbarState(next: string): void {
+  const now = Date.now();
+  // 状态没变也每 10 分钟记一条心跳，出问题时能看出窗口自认为在显示
+  if (next === taskbarLogState && now - taskbarLogAt < 10 * 60 * 1000) return;
+  taskbarLogState = next;
+  taskbarLogAt = now;
+  logTaskbar(next);
 }
 
 function createTaskbar(): BrowserWindow {
@@ -940,6 +1014,21 @@ function createTaskbar(): BrowserWindow {
     layoutTaskbar();
     pushTaskbar();
   });
+  // 窗口还在但不再绘制时，只有整窗重建能彻底恢复
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logTaskbar(`渲染进程退出：${details.reason} (${details.exitCode})`);
+    if (taskbarWin === win) rebuildTaskbar('render-process-gone');
+  });
+  win.webContents.on('unresponsive', () => {
+    logTaskbar('渲染进程无响应');
+    if (taskbarWin === win) rebuildTaskbar('unresponsive');
+  });
+  win.webContents.on('did-fail-load', (_event, code, description) => {
+    // -3 是取消导航，不是故障
+    if (code === -3) return;
+    logTaskbar(`页面加载失败：${code} ${description}`);
+    if (taskbarWin === win) rebuildTaskbar('did-fail-load');
+  });
   win.on('closed', () => {
     stopTaskbarDrag(false);
     if (taskbarWin === win) taskbarWin = null;
@@ -951,12 +1040,21 @@ function setTaskbarVisible(visible: boolean): void {
   if (!supportsTaskbar()) return;
   settings.taskbar.enabled = visible;
   saveSettings();
-  syncFullscreenWatch();
+  syncCoverageWatch();
   if (visible) {
-    if (!taskbarWin || taskbarWin.isDestroyed()) taskbarWin = createTaskbar();
+    // 关掉再打开时强制换新窗口：旧窗口的渲染进程坏掉后 hide/show 救不回来
+    if (taskbarWin && !taskbarWin.isDestroyed()) {
+      const stale = taskbarWin;
+      taskbarWin = null;
+      taskbarEdge = null;
+      taskbarLogState = '';
+      stale.destroy();
+    }
+    logTaskbar('已开启');
     layoutTaskbar();
     pushTaskbar();
   } else {
+    logTaskbar('已关闭');
     stopTaskbarDrag(false);
     taskbarWin?.hide();
   }
@@ -1229,6 +1327,7 @@ if (!app.requestSingleInstanceLock()) {
     storeFile = join(app.getPath('userData'), 'quotes.json');
     settingsFile = join(app.getPath('userData'), 'settings.json');
     calcFile = join(app.getPath('userData'), 'calculator.json');
+    taskbarLogFile = join(app.getPath('userData'), 'taskbar.log');
     rules = loadRules();
     settings = loadSettings();
     calcRecords = loadCalcRecords();
@@ -1267,9 +1366,10 @@ if (!app.requestSingleInstanceLock()) {
     // 菜单栏文字是画出来的，系统深浅色切换后要按新底色重画
     nativeTheme.on('updated', () => updateTrayTitle());
 
-    // 休眠期间探针可能被杀，醒来先按"全屏结束"恢复文字，等探针重新上报
+    // 休眠期间探针可能被杀、透明窗口也可能失去 DWM 合成；醒来直接换新窗口
     powerMonitor.on('resume', () => {
-      fullscreenMonitors = [];
+      coveredTaskbars = [];
+      rebuildTaskbar('系统唤醒');
       layoutTaskbar();
       void poll();
     });
