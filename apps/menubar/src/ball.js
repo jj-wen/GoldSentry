@@ -29,12 +29,14 @@ el.addEventListener('pointerdown', (event) => {
   startScreenX = event.screenX;
   startScreenY = event.screenY;
   el.setPointerCapture(event.pointerId);
+  document.body.classList.add('dragging');
   window.ball.dragStart();
 });
 
 el.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
+  document.body.classList.remove('dragging');
   try {
     el.releasePointerCapture(event.pointerId);
   } catch {
@@ -52,12 +54,14 @@ el.addEventListener('pointerup', (event) => {
 el.addEventListener('pointercancel', () => {
   if (!dragging) return;
   dragging = false;
+  document.body.classList.remove('dragging');
   window.ball.dragEnd();
 });
 
 window.addEventListener('blur', () => {
   if (!dragging) return;
   dragging = false;
+  document.body.classList.remove('dragging');
   window.ball.dragEnd();
 });
 

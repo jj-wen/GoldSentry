@@ -9,6 +9,7 @@ body {
 }
 
 .ball {
+  cursor: grab;
   position: relative;
   width: 104px;
   height: 104px;
@@ -88,3 +89,5 @@ body {
 .pct.down {
   color: #26a269;
 }
+
+body.dragging .ball { cursor: grabbing; }

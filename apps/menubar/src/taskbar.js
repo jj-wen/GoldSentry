@@ -100,12 +100,14 @@ strip.addEventListener('pointerdown', (event) => {
   startScreenX = event.screenX;
   startScreenY = event.screenY;
   strip.setPointerCapture(event.pointerId);
+  document.body.classList.add('dragging');
   window.taskbar.dragStart();
 });
 
 strip.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
+  document.body.classList.remove('dragging');
   try {
     strip.releasePointerCapture(event.pointerId);
   } catch {
@@ -123,12 +125,14 @@ strip.addEventListener('pointerup', (event) => {
 strip.addEventListener('pointercancel', () => {
   if (!dragging) return;
   dragging = false;
+  document.body.classList.remove('dragging');
   window.taskbar.dragEnd();
 });
 
 window.addEventListener('blur', () => {
   if (!dragging) return;
   dragging = false;
+  document.body.classList.remove('dragging');
   window.taskbar.dragEnd();
 });
 

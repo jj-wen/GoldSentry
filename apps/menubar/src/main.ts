@@ -1498,13 +1498,16 @@ ipcMain.on('taskbar:drag-start', () => {
   const info = taskbarInfo();
   if (!info) return;
   const vertical = info.edge === 'left' || info.edge === 'right';
+  taskbarEdge = info.edge;
   const bounds = taskbarWin.getBounds();
   const startOffset = vertical ? bounds.y : bounds.x;
   settings.taskbar.offset = startOffset;
   const start = screen.getCursorScreenPoint();
   const startedAt = Date.now();
+  let last = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
   taskbarDragTimer = setInterval(() => {
-    if (!taskbarWin || taskbarWin.isDestroyed()) {
+    const win = taskbarWin;
+    if (!win || win.isDestroyed()) {
       stopTaskbarDrag(false);
       return;
     }
@@ -1514,14 +1517,19 @@ ipcMain.on('taskbar:drag-start', () => {
     }
     const point = screen.getCursorScreenPoint();
     const delta = vertical ? point.y - start.y : point.x - start.x;
-    const next = Math.round(startOffset + delta);
-    if (next === settings.taskbar.offset) return;
-    settings.taskbar.offset = next;
+    // 拖动期间只按缓存的几何重算目标位置，不再每帧做完整 layout
+    const rect = placeOnTaskbar(taskbarContent, info, startOffset + delta, TASKBAR_END_MARGIN);
+    settings.taskbar.offset = vertical ? rect.y : rect.x;
+    if (rect.x === last.x && rect.y === last.y && rect.width === last.width && rect.height === last.height) return;
+    last = rect;
     taskbarDragMoved = true;
-    layoutTaskbar();
+    win.setBounds(rect);
   }, 16);
 });
-ipcMain.on('taskbar:drag-end', () => stopTaskbarDrag(taskbarDragMoved));
+ipcMain.on('taskbar:drag-end', () => {
+  stopTaskbarDrag(taskbarDragMoved);
+  layoutTaskbar();
+});
 ipcMain.on('taskbar:click', () => showPanel('detail', 'taskbar'));
 ipcMain.on('taskbar:right-click', () => showPanel('settings', 'taskbar'));
 ipcMain.on('taskbar:size', (_event, size: { width: number; height: number }) => {
