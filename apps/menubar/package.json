@@ -31,6 +31,7 @@
       "dist/**/*",
       "package.json"
     ],
+    "afterPack": "scripts/after-pack.cjs",
     "mac": {
       "category": "public.app-category.finance",
       "target": [

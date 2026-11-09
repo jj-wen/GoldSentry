@@ -24,8 +24,8 @@
 
 - Apple Silicon（M1/M2/M3/M4）下载 `GoldSentry-1.0.2-arm64.dmg`；Intel 下载 `GoldSentry-1.0.2-x64.dmg`。
 - 打开 dmg，把 **GoldSentry** 拖进「应用程序」文件夹，再从应用程序启动。
-- 当前未签名、未公证：首次启动请右键 → **打开**；若被系统拦截，去「系统设置 → 隐私与安全性」点 **仍要打开**。
-- 如果提示“应用已损坏”，在终端执行：
+- 当前只有 ad-hoc 签名、未公证：首次启动请右键 → **打开**；若被系统拦截，去「系统设置 → 隐私与安全性」点 **仍要打开**。
+- 如果提示“应用已损坏”（多见于从微信/AirDrop 传来的包），在终端执行：
   ```bash
   xattr -dr com.apple.quarantine /Applications/GoldSentry.app
   ```

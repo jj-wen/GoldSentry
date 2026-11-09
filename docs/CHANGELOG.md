@@ -16,6 +16,7 @@
 
 ### 修复
 
+- **macOS 安装包改为 ad-hoc 签名**：未签名的 bundle 被微信/AirDrop 打上 quarantine 后，Gatekeeper 会直接报“已损坏，应移到废纸篓”，右键打开也过不去。新增 `apps/menubar/scripts/after-pack.cjs`，在 `afterPack` 阶段对 `.app` 执行 `codesign --force --deep --sign -` 并做 `--verify --deep --strict`；仍不公证，首次启动提示会退为“无法验证开发者”，可右键打开。验证：arm64 dir 构建产物签名有效（`Identifier=com.goldsentry.menubar`、Sealed Resources v2），启动正常；系统弹窗文案无法自动验证，需肉眼确认。
 - **交易时段复核修正**：按京东 `goldPriceQuoteTimePeriodList` + 本地 10 天采样重新核对，修正工商/民生开盘为 09:10（不是 09:00），浙商展示为「周一 09:00–周六 02:30」；广发实测午后连续、夜盘到次日 02:00，不采用京东页面里的 15:30–20:00 空档。`bankSessionAt` 改为按「今天/昨天是否为交易日 + 开盘/收盘点」判断，凌晨夜盘归前一交易日；新增 09:05 未开盘、广发午后连续等断言。
 
 ### 变更
