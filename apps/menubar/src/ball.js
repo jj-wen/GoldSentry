@@ -19,36 +19,42 @@ window.ball.onUpdate((data) => {
 });
 
 let dragging = false;
-let travelled = 0;
+let startScreenX = 0;
+let startScreenY = 0;
 
-// 窗口跟着光标移动时 screenX 不变，所以增量只能取 movementX/Y（光标相对上一刻的位移）
+// 窗口跟着光标移动时 movementX/Y 在部分 Windows/DPI 组合下会失真；
+// 位置改由主进程按屏幕光标点驱动，这里只记录起点用于区分点击与拖动。
 el.addEventListener('pointerdown', (event) => {
   dragging = true;
-  travelled = 0;
+  startScreenX = event.screenX;
+  startScreenY = event.screenY;
   el.setPointerCapture(event.pointerId);
-});
-
-el.addEventListener('pointermove', (event) => {
-  if (!dragging) return;
-  const dx = event.movementX;
-  const dy = event.movementY;
-  if (!dx && !dy) return;
-  travelled += Math.abs(dx) + Math.abs(dy);
-  window.ball.moveBy(dx, dy);
+  window.ball.dragStart();
 });
 
 el.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
   el.releasePointerCapture(event.pointerId);
-  if (travelled >= 5) window.ball.dragEnd();
-  // 右键进设置，左键开详情，与托盘保持一致
-  else if (event.button === 2) window.ball.rightClick();
-  else window.ball.click();
+  window.ball.dragEnd();
+  const travelled = Math.abs(event.screenX - startScreenX) + Math.abs(event.screenY - startScreenY);
+  if (travelled < 5) {
+    // 右键进设置，左键开详情，与托盘保持一致
+    if (event.button === 2) window.ball.rightClick();
+    else window.ball.click();
+  }
 });
 
 el.addEventListener('pointercancel', () => {
+  if (!dragging) return;
   dragging = false;
+  window.ball.dragEnd();
+});
+
+window.addEventListener('blur', () => {
+  if (!dragging) return;
+  dragging = false;
+  window.ball.dragEnd();
 });
 
 el.addEventListener('wheel', (event) => {

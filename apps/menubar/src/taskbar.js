@@ -91,36 +91,41 @@ window.taskbar.onLayout((data) => {
 });
 
 let dragging = false;
-let travelled = 0;
+let startScreenX = 0;
+let startScreenY = 0;
 
-// 窗口跟着光标走时 screenX 不变，增量只能取 movementX/Y
+// 位置由主进程按屏幕光标点驱动；这里只记录起点，用来区分点击和拖动
 strip.addEventListener('pointerdown', (event) => {
   dragging = true;
-  travelled = 0;
+  startScreenX = event.screenX;
+  startScreenY = event.screenY;
   strip.setPointerCapture(event.pointerId);
-});
-
-strip.addEventListener('pointermove', (event) => {
-  if (!dragging) return;
-  const dx = event.movementX;
-  const dy = event.movementY;
-  if (!dx && !dy) return;
-  travelled += Math.abs(dx) + Math.abs(dy);
-  window.taskbar.moveBy(dx, dy);
+  window.taskbar.dragStart();
 });
 
 strip.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
   strip.releasePointerCapture(event.pointerId);
-  if (travelled >= 5) window.taskbar.dragEnd();
-  // 右键进设置，左键开详情，与托盘保持一致
-  else if (event.button === 2) window.taskbar.rightClick();
-  else window.taskbar.click();
+  window.taskbar.dragEnd();
+  const travelled = Math.abs(event.screenX - startScreenX) + Math.abs(event.screenY - startScreenY);
+  if (travelled < 5) {
+    // 右键进设置，左键开详情，与托盘保持一致
+    if (event.button === 2) window.taskbar.rightClick();
+    else window.taskbar.click();
+  }
 });
 
 strip.addEventListener('pointercancel', () => {
+  if (!dragging) return;
   dragging = false;
+  window.taskbar.dragEnd();
+});
+
+window.addEventListener('blur', () => {
+  if (!dragging) return;
+  dragging = false;
+  window.taskbar.dragEnd();
 });
 
 strip.addEventListener('contextmenu', (event) => event.preventDefault());

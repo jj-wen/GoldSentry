@@ -768,6 +768,7 @@ function setBallVisible(visible: boolean): void {
     ball.setOpacity(settings.ball.opacity);
     pushBall();
   } else {
+    stopBallDrag(false);
     ball?.hide();
   }
   settings.ball.enabled = visible;
@@ -844,6 +845,8 @@ function syncFullscreenWatch(): void {
 app.on('will-quit', () => {
   stopFullscreenWatch?.();
   stopFullscreenWatch = null;
+  stopBallDrag(false);
+  stopTaskbarDrag(false);
 });
 
 /** TrafficMonitor 式贴附：Electron 嵌不进 Shell_TrayWnd，就用置顶透明窗口盖在任务栏上 */
@@ -938,6 +941,7 @@ function createTaskbar(): BrowserWindow {
     pushTaskbar();
   });
   win.on('closed', () => {
+    stopTaskbarDrag(false);
     if (taskbarWin === win) taskbarWin = null;
   });
   return win;
@@ -953,6 +957,7 @@ function setTaskbarVisible(visible: boolean): void {
     layoutTaskbar();
     pushTaskbar();
   } else {
+    stopTaskbarDrag(false);
     taskbarWin?.hide();
   }
   pushState();
@@ -1423,16 +1428,51 @@ ipcMain.handle('calc:remove', (_event, args: { ids?: unknown; symbol?: string })
 ipcMain.on('gold:quit', () => app.quit());
 ipcMain.on('gold:notify-test', () => sendTestNotification());
 
-// 球的拖动/滚轮走单向通道，invoke 的往返会让拖动明显发涩
-ipcMain.on('ball:move-by', (_event, dx: number, dy: number) => {
-  if (!ball || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
-  // 页面被 zoomFactor 放大后，1 个 CSS 像素 = scale 个屏幕像素；
-  // 不换算的话球会比鼠标快（scale 1.8 时拖 100px 跑 180px）
+// 拖动按屏幕光标点驱动，不消费 pointermove 的 movementX/Y：
+// 部分 Windows/DPI 组合下窗口跟着光标走时增量会失真（球往左上角跑），
+// 高回报率鼠标还会把每秒上千个 pointermove 灌进主进程造成卡顿。
+let ballDragTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopBallDrag(save: boolean): void {
+  if (ballDragTimer) clearInterval(ballDragTimer);
+  ballDragTimer = null;
+  if (save) saveBallPosition();
+}
+
+ipcMain.on('ball:drag-start', () => {
+  if (!ball || ball.isDestroyed() || ballDragTimer) return;
+  const cursor = screen.getCursorScreenPoint();
   const [x, y] = ball.getPosition();
-  ball.setPosition(Math.round(x + dx * settings.ball.scale), Math.round(y + dy * settings.ball.scale));
-  clampBall(ball);
+  const offsetX = cursor.x - x;
+  const offsetY = cursor.y - y;
+  let lastX = x;
+  let lastY = y;
+  const startedAt = Date.now();
+  ballDragTimer = setInterval(() => {
+    if (!ball || ball.isDestroyed()) {
+      stopBallDrag(false);
+      return;
+    }
+    // pointerup 丢失时别让球永远粘在光标上
+    if (Date.now() - startedAt > 60000) {
+      stopBallDrag(true);
+      return;
+    }
+    const point = screen.getCursorScreenPoint();
+    const bounds = ball.getBounds();
+    // 按光标所在显示器夹取，否则跨屏拖动会被旧屏边界卡住
+    const work = screen.getDisplayNearestPoint(point).workArea;
+    const placed = clampIntoWorkArea(
+      { x: Math.round(point.x - offsetX), y: Math.round(point.y - offsetY), width: bounds.width, height: bounds.height },
+      work,
+    );
+    if (placed.x === lastX && placed.y === lastY) return;
+    lastX = placed.x;
+    lastY = placed.y;
+    ball.setPosition(placed.x, placed.y);
+  }, 16);
 });
-ipcMain.on('ball:drag-end', () => saveBallPosition());
+ipcMain.on('ball:drag-end', () => stopBallDrag(true));
 ipcMain.on('ball:click', () => showPanel('detail', 'ball'));
 ipcMain.on('ball:right-click', () => showPanel('settings', 'ball'));
 ipcMain.on('ball:opacity-delta', (_event, delta: number) => {
@@ -1440,18 +1480,42 @@ ipcMain.on('ball:opacity-delta', (_event, delta: number) => {
   applyBallOpacity(settings.ball.opacity + delta);
 });
 
-ipcMain.on('taskbar:move-by', (_event, dx: number, dy: number) => {
-  if (!taskbarWin || taskbarWin.isDestroyed()) return;
+let taskbarDragTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopTaskbarDrag(save: boolean): void {
+  if (taskbarDragTimer) clearInterval(taskbarDragTimer);
+  taskbarDragTimer = null;
+  if (save) saveTaskbarOffset();
+}
+
+ipcMain.on('taskbar:drag-start', () => {
+  if (!taskbarWin || taskbarWin.isDestroyed() || taskbarDragTimer) return;
   const info = taskbarInfo();
   if (!info) return;
   const vertical = info.edge === 'left' || info.edge === 'right';
-  const delta = vertical ? dy : dx;
-  if (!Number.isFinite(delta)) return;
   const bounds = taskbarWin.getBounds();
-  settings.taskbar.offset = Math.round((vertical ? bounds.y : bounds.x) + delta);
-  layoutTaskbar();
+  const startOffset = vertical ? bounds.y : bounds.x;
+  settings.taskbar.offset = startOffset;
+  const start = screen.getCursorScreenPoint();
+  const startedAt = Date.now();
+  taskbarDragTimer = setInterval(() => {
+    if (!taskbarWin || taskbarWin.isDestroyed()) {
+      stopTaskbarDrag(false);
+      return;
+    }
+    if (Date.now() - startedAt > 60000) {
+      stopTaskbarDrag(true);
+      return;
+    }
+    const point = screen.getCursorScreenPoint();
+    const delta = vertical ? point.y - start.y : point.x - start.x;
+    const next = Math.round(startOffset + delta);
+    if (next === settings.taskbar.offset) return;
+    settings.taskbar.offset = next;
+    layoutTaskbar();
+  }, 16);
 });
-ipcMain.on('taskbar:drag-end', () => saveTaskbarOffset());
+ipcMain.on('taskbar:drag-end', () => stopTaskbarDrag(true));
 ipcMain.on('taskbar:click', () => showPanel('detail', 'taskbar'));
 ipcMain.on('taskbar:right-click', () => showPanel('settings', 'taskbar'));
 ipcMain.on('taskbar:size', (_event, size: { width: number; height: number }) => {

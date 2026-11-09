@@ -96,6 +96,8 @@ export function watchFullscreen(onChange: (rects: Rect[]) => void): FullscreenWa
   let buffered = '';
   let lastLine: string | null = null;
   let lastDataAt = 0;
+  // 探针起不来时避免每 2 秒重开一次 PowerShell（编译 Add-Type 很重）
+  let restartDelay = 2000;
 
   const spawnProbe = (): void => {
     if (stopped) return;
@@ -113,6 +115,7 @@ export function watchFullscreen(onChange: (rects: Rect[]) => void): FullscreenWa
     proc.stdout?.on('data', (chunk: string) => {
       if (stopped || child !== proc) return;
       lastDataAt = Date.now();
+      restartDelay = 2000;
       buffered += chunk;
       const lines = buffered.split(/\r?\n/);
       buffered = lines.pop() ?? '';
@@ -126,9 +129,10 @@ export function watchFullscreen(onChange: (rects: Rect[]) => void): FullscreenWa
     const failed = (reason: string): void => {
       if (stopped || child !== proc) return;
       child = null;
-      console.error(`[fullscreen] ${reason}，先恢复显示任务栏文字，2 秒后重启探针`);
+      console.error(`[fullscreen] ${reason}，先恢复显示任务栏文字，${restartDelay / 1000} 秒后重启探针`);
       onChange([]);
-      restartTimer = setTimeout(spawnProbe, 2000);
+      restartTimer = setTimeout(spawnProbe, restartDelay);
+      restartDelay = Math.min(restartDelay * 2, 30000);
     };
     proc.on('error', (err) => failed(`探针启动失败：${err.message}`));
     proc.on('exit', (code) => failed(`探针意外退出 code=${code}`));
@@ -142,7 +146,8 @@ export function watchFullscreen(onChange: (rects: Rect[]) => void): FullscreenWa
     console.error('[fullscreen] 探针 15 秒无输出，按全屏结束处理并重启');
     onChange([]);
     hung.kill();
-    restartTimer = setTimeout(spawnProbe, 1000);
+    restartTimer = setTimeout(spawnProbe, restartDelay);
+    restartDelay = Math.min(restartDelay * 2, 30000);
   }, 3000);
 
   return {

@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('ball', {
-  // 拖动与滚轮都是单向通知：走 invoke 会让每一下移动都等一次往返，手感发涩
-  moveBy: (dx, dy) => ipcRenderer.send('ball:move-by', dx, dy),
+  // 拖动由主进程按光标位置驱动，渲染层只负责开始/结束，避免高频 pointermove 灌满 IPC
+  dragStart: () => ipcRenderer.send('ball:drag-start'),
   dragEnd: () => ipcRenderer.send('ball:drag-end'),
   click: () => ipcRenderer.send('ball:click'),
   rightClick: () => ipcRenderer.send('ball:right-click'),

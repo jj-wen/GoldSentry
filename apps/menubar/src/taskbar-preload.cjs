@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('taskbar', {
-  // 拖动是单向通知：invoke 的往返会让移动明显发涩
-  moveBy: (dx, dy) => ipcRenderer.send('taskbar:move-by', dx, dy),
+  // 拖动由主进程按光标位置驱动，渲染层只负责开始/结束
+  dragStart: () => ipcRenderer.send('taskbar:drag-start'),
   dragEnd: () => ipcRenderer.send('taskbar:drag-end'),
   click: () => ipcRenderer.send('taskbar:click'),
   rightClick: () => ipcRenderer.send('taskbar:right-click'),
