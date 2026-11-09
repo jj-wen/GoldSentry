@@ -35,7 +35,11 @@ el.addEventListener('pointerdown', (event) => {
 el.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
-  el.releasePointerCapture(event.pointerId);
+  try {
+    el.releasePointerCapture(event.pointerId);
+  } catch {
+    // 捕获可能已被系统释放，不能因此漏掉 dragEnd
+  }
   window.ball.dragEnd();
   const travelled = Math.abs(event.screenX - startScreenX) + Math.abs(event.screenY - startScreenY);
   if (travelled < 5) {

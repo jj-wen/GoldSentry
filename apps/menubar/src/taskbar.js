@@ -106,7 +106,11 @@ strip.addEventListener('pointerdown', (event) => {
 strip.addEventListener('pointerup', (event) => {
   if (!dragging) return;
   dragging = false;
-  strip.releasePointerCapture(event.pointerId);
+  try {
+    strip.releasePointerCapture(event.pointerId);
+  } catch {
+    // 捕获可能已被系统释放，不能因此漏掉 dragEnd
+  }
   window.taskbar.dragEnd();
   const travelled = Math.abs(event.screenX - startScreenX) + Math.abs(event.screenY - startScreenY);
   if (travelled < 5) {
