@@ -12,9 +12,10 @@
 
 ```bash
 npm run probe        # 真实拉取全部行情（改任何取数/解析代码后必须跑）
-npm run verify:all   # 展示格式/任务栏几何 + 提醒规则 + 健康判定 + Bark 推送 + VS Code bundle 五套断言
+npm run verify:all   # 展示格式/任务栏几何 + 提醒规则 + 健康判定 + 均价计算器 + Bark 推送 + VS Code bundle 六套断言
 npm run verify:display # 只跑金额格式、透明度、任务栏贴附几何/全屏覆盖、交易时段与更新列（已并入 verify:all）
 npm run verify:alerts  # 只跑提醒规则：id 约定、脏输入清理、上升沿与冷却
+npm run verify:calc    # 只跑均价计算器：加权均价、卖出扣减、超卖与删除校验
 npm run menubar      # 启动菜单栏（内部会先 bundle）
 npm run menubar:dist # 出 dmg
 npm run menubar:dist:win # 出 Windows portable + NSIS（NSIS 见陷阱表）
@@ -38,8 +39,9 @@ Windows 机器额外注意：根脚本内部直接调 `pnpm`，新机器要先 `
 6. **费率不是实时数据**。`fees.ts` 每条都带 `asOf`，改值必须更新日期并说明出处；查不到就显示 `—`，不要编。
 7. **金额展示一律走 core 的 `formatPrice` / `formatPct`**（固定两位小数，缺失显示 `—`），不要在面板、托盘、悬浮球、任务栏文字或扩展里手写 `toFixed`。新增展示位先补 `verify:display`。
 8. **Windows 任务栏文字是覆盖窗口，不是系统内嵌**。几何只从显示器 `bounds` 与 `workArea` 的差推断（`core/taskbar.ts`）；系统任务栏窗口 Electron 读不到，别尝试依赖 `Shell_TrayWnd` 的字段或坐标。是否因全屏应用隐藏由窗口枚举结果 + `coversTaskbar` 决定（见陷阱表），不要拿全局通知状态判断。
-9. **点击语义不许分形态漂移**：左键=详情、右键=设置，托盘、悬浮球、任务栏文字一致。托盘不设 `contextMenu`（否则右键被菜单抢占），菜单项全部放在面板设置页里。VS Code 状态栏做不到左右键区分，用第二个 `$(gear)` 项承担设置入口，改动要在 README 与代码注释里说明这是平台限制。
-10. **显示什么由 core 决定，不由外壳决定**。品种名/箭头/涨跌幅/颜色一律走 `settings.display`（`name` / `up` / `down` / `pct`）+ `core/format.ts` 的 `priceTone`（颜色：涨红跌绿，**持平与未知都是白色**）、`showArrow`（箭头：该方向被关掉或持平就不出现）、`arrowModeOf` / `displayFromArrowMode`（面板那个"涨跌箭头"下拉框与两个布尔的互转）与 `normalizeDisplay`；`pct` 默认关，打开后各端在价格后追加 `formatPct`，没有涨跌幅就整段不显示。新增展示位时不要自己判断方向。关掉某个方向**只隐藏箭头，不能把价格颜色也一起变白**（曾经踩过： tone 跟着开关走，关下跌后绿色价格变成白色，看着像数据挂了）。
+9. **计算器金额也走 core**：均价、成本、已实现/浮动盈亏全部在 `core/calculator.ts` 算，面板只贴字符串；卖出按移动加权平均扣减成本，卖出超过持仓必须拦下或标红。
+10. **点击语义不许分形态漂移**：左键=详情、右键=设置，托盘、悬浮球、任务栏文字一致。托盘不设 `contextMenu`（否则右键被菜单抢占），菜单项全部放在面板设置页里。VS Code 状态栏做不到左右键区分，用第二个 `$(gear)` 项承担设置入口，改动要在 README 与代码注释里说明这是平台限制。
+11. **显示什么由 core 决定，不由外壳决定**。品种名/箭头/涨跌幅/颜色一律走 `settings.display`（`name` / `up` / `down` / `pct`）+ `core/format.ts` 的 `priceTone`（颜色：涨红跌绿，**持平与未知都是白色**）、`showArrow`（箭头：该方向被关掉或持平就不出现）、`arrowModeOf` / `displayFromArrowMode`（面板那个"涨跌箭头"下拉框与两个布尔的互转）与 `normalizeDisplay`；`pct` 默认关，打开后各端在价格后追加 `formatPct`，没有涨跌幅就整段不显示。新增展示位时不要自己判断方向。关掉某个方向**只隐藏箭头，不能把价格颜色也一起变白**（曾经踩过： tone 跟着开关走，关下跌后绿色价格变成白色，看着像数据挂了）。
 
 ## 已知陷阱（都是踩过的）
 

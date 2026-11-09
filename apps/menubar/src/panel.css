@@ -415,3 +415,167 @@ body { overflow-y: auto; overflow-x: hidden; }
 .foot-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 12px 12px; }
 
 button.danger { color: #f0b8b0; }
+
+/* ---------- 计算页：均价 / 持仓 / 模拟盈亏 ---------- */
+
+#view-calc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+}
+
+.calc-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+
+.calc-card {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #24262b;
+}
+
+.calc-card span { display: block; color: var(--muted); font-size: 10px; }
+
+.calc-card b {
+  display: block;
+  margin-top: 3px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calc-card em { display: block; margin-top: 2px; font-style: normal; color: #7d7f86; font-size: 10px; }
+
+.calc-card.accent { border-color: #4a3f22; background: #2a2519; }
+
+.calc-card.accent b { color: var(--accent); }
+
+.calc-form {
+  padding: 8px 10px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #24262b;
+}
+
+.calc-side { display: flex; gap: 4px; padding: 3px; border-radius: 6px; background: #1b1d21; }
+
+.calc-side button {
+  flex: 1;
+  padding: 5px 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.calc-side button:hover { background: transparent; color: var(--fg); }
+
+.calc-side button.on { background: #2e323a; color: var(--fg); }
+
+.calc-side button.on[data-side='buy'] { color: #6fbf73; }
+
+.calc-side button.on[data-side='sell'] { color: #ef6a5c; }
+
+.calc-field { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 11px; }
+
+.calc-field input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--fg);
+  background: #1c1e22;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.calc-pair { display: flex; gap: 8px; }
+
+.calc-add { width: 100%; margin-top: 8px; padding: 6px 0; border: none; background: #233a2a; color: #8fd39a; }
+
+.calc-add:hover { background: #2a4532; }
+
+.calc-add.sell { background: #3a2523; color: #f0b8b0; }
+
+.calc-add.sell:hover { background: #472d2a; }
+
+.calc-error { margin: 6px 0 0; color: #f0b8b0; font-size: 11px; }
+
+.calc-list { border: 1px solid var(--line); border-radius: 8px; background: #24262b; overflow: hidden; }
+
+.calc-list-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+
+.calc-list-head .grow { flex: 1; color: var(--muted); font-size: 11px; }
+
+.calc-list-head button { padding: 2px 8px; font-size: 11px; }
+
+.calc-row {
+  display: grid;
+  grid-template-columns: 18px 36px 76px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+
+.calc-row:last-child { border-bottom: none; }
+
+.calc-row input { margin: 0; }
+
+.calc-side-tag { padding: 1px 5px; border-radius: 4px; font-size: 10px; text-align: center; }
+
+.calc-side-tag.buy { background: #233a2a; color: #8fd39a; }
+
+.calc-side-tag.sell { background: #3a2523; color: #f0b8b0; }
+
+.calc-mid { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.calc-mid span, .calc-amount span { color: var(--muted); }
+
+.calc-mid b, .calc-amount b { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.calc-amount { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+
+.calc-empty { margin: 0; padding: 12px 10px; color: var(--muted); font-size: 11px; text-align: center; }
+
+#calc-rows { max-height: 160px; overflow-y: auto; }
+
+.calc-sim {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #24262b;
+  font-size: 11px;
+}
+
+.calc-sim-row { display: flex; align-items: baseline; gap: 6px; color: var(--muted); flex-wrap: wrap; }
+
+.calc-sim-row b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.calc-sim-row select {
+  font: inherit;
+  margin-left: auto;
+  color: var(--fg);
+  background: #1c1e22;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.calc-pnl { font-size: 13px; font-weight: 600; }
+
+.calc-tone-up { color: #ef5350; }
+
+.calc-tone-down { color: #26a269; }
+
+.calc-tone-flat { color: var(--fg); }
+
+.calc-invalid { margin: 2px 0 0; color: #d8a24a; font-size: 11px; }

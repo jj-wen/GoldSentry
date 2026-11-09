@@ -12,6 +12,7 @@ import {
 import type { NativeImage } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import {
   applySymbolOrder,
   arrowModeOf,
@@ -23,6 +24,12 @@ import {
   backoffSeconds,
   ballSizeFor,
   bankSessionAt,
+  calcAmount,
+  calcDeleteError,
+  calcEstimate,
+  calcEstimateText,
+  calcLedger,
+  calcSelection,
   clampBallScale,
   clampIntoWorkArea,
   clampOpacity,
@@ -33,9 +40,12 @@ import {
   detectTaskbar,
   displayFromArrowMode,
   feeCell,
+  formatGrams,
   formatPct,
   formatPrice,
   formatQuoteCells,
+  isCalcDate,
+  normalizeCalcRecords,
   normalizeDisplay,
   normalizeSymbolOrder,
   normalizeTrendSettings,
@@ -63,6 +73,8 @@ import {
   type AlertRule,
   type ArrowMode,
   type BarkConfig,
+  type CalcRecord,
+  type CalcSide,
   type DisplayToggles,
   type FiredAlert,
   type HealthReport,
@@ -99,7 +111,9 @@ const ALLOWED_INTERVALS = [5, 10, 30, 60, 120, 300, 600];
 let rulesFile = '';
 let storeFile = '';
 let settingsFile = '';
+let calcFile = '';
 let rules: AlertRule[] = [];
+let calcRecords: CalcRecord[] = [];
 let store: QuoteStore;
 
 /** 鼠标悬浮详情行时要展示的银行信息，全部在 core 里算好，面板只贴 */
@@ -353,6 +367,146 @@ function loadSettings(): Settings {
 
 function saveSettings(): void {
   writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+}
+
+/* ---------- 均价计算器 ---------- */
+
+interface CalcRowView {
+  id: string;
+  side: CalcSide;
+  date: string;
+  gramsText: string;
+  priceText: string;
+  amountText: string;
+}
+
+interface CalcBaseView {
+  rows: CalcRowView[];
+  symbols: Array<{ symbol: string; label: string }>;
+  defaultSymbol: string;
+  counts: { total: number; buys: number; sells: number };
+}
+
+interface CalcStatsView {
+  selected: { gramsText: string; countText: string; costText: string; avgText: string };
+  ledger: {
+    gramsText: string;
+    costText: string;
+    avgCostText: string;
+    realizedText: string;
+    realizedTone: PriceTone;
+    invalidNote: string;
+  };
+  quote: { symbol: string; label: string; buyText: string; sellText: string } | null;
+  estimate: { valueText: string; pnlText: string; pnlPctText: string; tone: PriceTone } | null;
+}
+
+function loadCalcRecords(): CalcRecord[] {
+  try {
+    const raw = JSON.parse(readFileSync(calcFile, 'utf8'));
+    return normalizeCalcRecords(Array.isArray(raw) ? raw : raw?.records);
+  } catch {
+    return [];
+  }
+}
+
+function saveCalcRecords(): void {
+  writeFileSync(calcFile, JSON.stringify({ records: calcRecords }, null, 2));
+}
+
+function normalizeCalcIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string' || !item || out.includes(item)) continue;
+    out.push(item);
+  }
+  return out;
+}
+
+function calcSymbols(): Array<{ symbol: string; label: string }> {
+  return applySymbolOrder(state.quotes, settings.symbolOrder).map((quote) => ({
+    symbol: quote.symbol,
+    label: quote.label,
+  }));
+}
+
+function buildCalcBase(): CalcBaseView {
+  const sorted = [...calcRecords].sort(
+    (a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt || a.id.localeCompare(b.id),
+  );
+  return {
+    rows: sorted.map((record) => ({
+      id: record.id,
+      side: record.side,
+      date: record.date,
+      gramsText: formatGrams(record.grams),
+      priceText: formatPrice(record.price),
+      amountText: `¥${formatPrice(calcAmount(record))}`,
+    })),
+    symbols: calcSymbols(),
+    defaultSymbol: settings.primarySymbol,
+    counts: {
+      total: calcRecords.length,
+      buys: calcRecords.filter((record) => record.side === 'buy').length,
+      sells: calcRecords.filter((record) => record.side === 'sell').length,
+    },
+  };
+}
+
+function buildCalcStats(symbol: string, ids: string[]): CalcStatsView {
+  const quotes = applySymbolOrder(state.quotes, settings.symbolOrder);
+  const chosen =
+    quotes.find((quote) => quote.symbol === symbol) ??
+    quotes.find((quote) => quote.symbol === settings.primarySymbol) ??
+    quotes[0];
+  const selection = calcSelection(calcRecords, ids);
+  const picked = new Set(ids);
+  const selectedBuys = calcRecords.filter((record) => record.side === 'buy' && picked.has(record.id)).length;
+  const totalBuys = calcRecords.filter((record) => record.side === 'buy').length;
+  const ledger = calcLedger(calcRecords);
+  const estimate = calcEstimate(ledger, chosen?.sellPrice);
+  const estimateText = calcEstimateText(estimate);
+  return {
+    selected: {
+      gramsText: formatGrams(selection.grams),
+      countText: `${selectedBuys}/${totalBuys} 条`,
+      costText: `¥${formatPrice(selection.cost)}`,
+      avgText: selection.avgPrice === null ? '—' : formatPrice(selection.avgPrice),
+    },
+    ledger: {
+      gramsText: formatGrams(ledger.grams),
+      costText: `¥${formatPrice(ledger.cost)}`,
+      avgCostText: ledger.avgCost === null ? '—' : formatPrice(ledger.avgCost),
+      realizedText: `${ledger.realized >= 0 ? '+' : ''}${formatPrice(ledger.realized)}`,
+      realizedTone: priceTone(ledger.realized),
+      invalidNote: ledger.invalidNote,
+    },
+    quote: chosen
+      ? {
+          symbol: chosen.symbol,
+          label: chosen.label,
+          buyText: formatPrice(chosen.buyPrice),
+          sellText: formatPrice(chosen.sellPrice),
+        }
+      : null,
+    estimate: estimate
+      ? {
+          valueText: `¥${formatPrice(estimate.value)}`,
+          pnlText: estimateText.pnl,
+          pnlPctText: estimateText.pct,
+          tone: estimate.tone,
+        }
+      : null,
+  };
+}
+
+function calcView(symbol: unknown, ids: unknown): { ok: true; base: CalcBaseView; stats: CalcStatsView } {
+  return {
+    ok: true,
+    base: buildCalcBase(),
+    stats: buildCalcStats(typeof symbol === 'string' ? symbol : '', normalizeCalcIds(ids)),
+  };
 }
 
 function barkConfig(): BarkConfig {
@@ -1065,8 +1219,10 @@ if (!app.requestSingleInstanceLock()) {
     rulesFile = join(app.getPath('userData'), 'rules.json');
     storeFile = join(app.getPath('userData'), 'quotes.json');
     settingsFile = join(app.getPath('userData'), 'settings.json');
+    calcFile = join(app.getPath('userData'), 'calculator.json');
     rules = loadRules();
     settings = loadSettings();
+    calcRecords = loadCalcRecords();
     store = new QuoteStore(storeFile);
 
     // template 图是纯黑剪影，只适配 macOS 菜单栏；Windows 任务栏是浅色底，要用彩色图标
@@ -1207,6 +1363,53 @@ ipcMain.handle('gold:set-trend', (_event, next: { enabled?: boolean; range?: Tre
   saveSettings();
   pushState();
   return state;
+});
+
+ipcMain.handle('calc:load', (_event, args: { symbol?: string; ids?: unknown }) => calcView(args?.symbol, args?.ids));
+ipcMain.handle('calc:summary', (_event, args: { symbol?: string; ids?: unknown }) => ({
+  ok: true,
+  stats: buildCalcStats(typeof args?.symbol === 'string' ? args.symbol : '', normalizeCalcIds(args?.ids)),
+}));
+ipcMain.handle(
+  'calc:add',
+  (_event, args: { side?: unknown; date?: unknown; grams?: unknown; price?: unknown; symbol?: string; ids?: unknown }) => {
+    const side: CalcSide | null = args?.side === 'buy' ? 'buy' : args?.side === 'sell' ? 'sell' : null;
+    const date = typeof args?.date === 'string' ? args.date : '';
+    const grams = Number(args?.grams);
+    const price = Number(args?.price);
+    if (!side) return { ok: false, error: '请选择买入或卖出' };
+    if (!isCalcDate(date)) return { ok: false, error: '日期不合法' };
+    if (!Number.isFinite(grams) || grams <= 0) return { ok: false, error: '克数要大于 0' };
+    if (!Number.isFinite(price) || price <= 0) return { ok: false, error: '单价要大于 0' };
+    if (side === 'sell') {
+      const ledger = calcLedger(calcRecords);
+      if (grams > ledger.grams + 1e-6) {
+        return { ok: false, error: `卖出克数超过当前持仓 ${formatGrams(ledger.grams)}` };
+      }
+    }
+    const record: CalcRecord = {
+      id: randomUUID(),
+      side,
+      date,
+      grams: Math.round(grams * 1000) / 1000,
+      price: Math.round(price * 100) / 100,
+      createdAt: Date.now(),
+    };
+    calcRecords.push(record);
+    saveCalcRecords();
+    return { ...calcView(args?.symbol, args?.ids), addedId: record.id };
+  },
+);
+ipcMain.handle('calc:remove', (_event, args: { ids?: unknown; symbol?: string }) => {
+  const ids = normalizeCalcIds(args?.ids);
+  if (ids.length) {
+    const error = calcDeleteError(calcRecords, ids);
+    if (error) return { ok: false, error };
+    const picked = new Set(ids);
+    calcRecords = calcRecords.filter((record) => !picked.has(record.id));
+    saveCalcRecords();
+  }
+  return calcView(args?.symbol, ids);
 });
 ipcMain.on('gold:quit', () => app.quit());
 ipcMain.on('gold:notify-test', () => sendTestNotification());

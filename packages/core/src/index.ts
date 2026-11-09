@@ -91,6 +91,22 @@ export {
   type TaskbarEdge,
   type TaskbarInfo,
 } from './taskbar.ts';
+export {
+  calcAmount,
+  calcDeleteError,
+  calcEstimate,
+  calcEstimateText,
+  calcLedger,
+  calcSelection,
+  formatGrams,
+  isCalcDate,
+  normalizeCalcRecords,
+  type CalcEstimate,
+  type CalcLedger,
+  type CalcRecord,
+  type CalcSelection,
+  type CalcSide,
+} from './calculator.ts';
 
 import type { QuoteSource } from './types.ts';
 import { ccbSource } from './sources/ccb.ts';

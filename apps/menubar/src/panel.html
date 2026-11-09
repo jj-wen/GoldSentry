@@ -15,6 +15,7 @@
 
     <nav class="tabs">
       <button id="tab-detail" class="tab" type="button">详情</button>
+      <button id="tab-calc" class="tab" type="button">计算</button>
       <button id="tab-settings" class="tab" type="button">设置</button>
     </nav>
 
@@ -43,6 +44,74 @@
       </table>
       <div id="quote-tip" class="quote-tip" hidden></div>
       <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序；鼠标悬停任意一行可看该银行的全名、费用口径、报价时间与交易时段。交易日一般 09:00 开市，工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00；周末与法定节假日休市，节前最后一个交易日晚上停夜盘。点差列优先显示买入卖一的点差，点差为 0 时显示服务费。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。</p>
+    </main>
+
+    <main id="view-calc" hidden>
+      <section class="calc-cards" title="上方卡片只统计选中的买入；当前持仓与盈亏按全部记录计算">
+        <div class="calc-card">
+          <span>选中克数</span>
+          <b id="calc-grams">0g</b>
+          <em id="calc-count">0/0 条</em>
+        </div>
+        <div class="calc-card">
+          <span>总成本</span>
+          <b id="calc-cost">¥0.00</b>
+          <em>仅统计选中的买入</em>
+        </div>
+        <div class="calc-card accent">
+          <span>平均价</span>
+          <b id="calc-avg">—</b>
+          <em>元/克</em>
+        </div>
+      </section>
+
+      <section class="calc-form">
+        <div class="calc-side">
+          <button id="calc-buy" class="on" type="button" data-side="buy">买入</button>
+          <button id="calc-sell" type="button" data-side="sell">卖出</button>
+        </div>
+        <label class="calc-field"><span>日期</span><input id="calc-date" type="date" /></label>
+        <div class="calc-pair">
+          <label class="calc-field">
+            <span>克数</span><input id="calc-grams-input" type="number" min="0" step="0.001" placeholder="0.000" />
+          </label>
+          <label class="calc-field">
+            <span>单价</span><input id="calc-price-input" type="number" min="0" step="0.01" placeholder="0.00" />
+          </label>
+        </div>
+        <button id="calc-add" class="calc-add" type="button">添加买入</button>
+        <p id="calc-error" class="calc-error" hidden></p>
+      </section>
+
+      <section class="calc-list">
+        <div class="calc-list-head">
+          <span class="grow" id="calc-total">共 0 条</span>
+          <button id="calc-all" type="button">全选</button>
+          <button id="calc-del" type="button" class="danger">删除选中</button>
+        </div>
+        <div id="calc-rows"></div>
+      </section>
+      <section class="calc-sim">
+        <div class="calc-sim-row">
+          <span>模拟价格</span>
+          <select id="calc-symbol"></select>
+        </div>
+        <div class="calc-sim-row">
+          <span>实时买入</span><b id="calc-buyquote">—</b>
+          <span>实时卖出</span><b id="calc-sellquote">—</b>
+        </div>
+        <div class="calc-sim-row">
+          <span>当前持仓</span><b id="calc-hold">0g</b>
+          <span>成本</span><b id="calc-holdcost">¥0.00</b>
+          <span>已实现</span><b id="calc-realized">—</b>
+        </div>
+        <div class="calc-sim-row">
+          <span>模拟浮盈</span>
+          <b id="calc-pnl" class="calc-pnl">—</b>
+          <em id="calc-pnlpct"></em>
+        </div>
+        <p class="calc-invalid" id="calc-invalid" hidden></p>
+      </section>
     </main>
 
     <main id="view-settings" hidden>

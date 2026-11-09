@@ -13,12 +13,13 @@
     "verify:health": "node scripts/verify-health.ts",
     "verify:notify": "node scripts/verify-notify.ts",
     "verify:vscode": "pnpm --filter @goldsentry/vscode build && node scripts/verify-vscode.cjs",
-    "verify:all": "pnpm verify:display && pnpm verify:alerts && pnpm verify:health && pnpm verify:notify && pnpm verify:vscode",
+    "verify:all": "pnpm verify:display && pnpm verify:alerts && pnpm verify:health && pnpm verify:calc && pnpm verify:notify && pnpm verify:vscode",
     "menubar": "pnpm --filter @goldsentry/menubar start",
     "menubar:dist": "pnpm --filter @goldsentry/menubar dist",
     "menubar:dist:win": "pnpm --filter @goldsentry/menubar dist:win",
     "vscode:build": "pnpm --filter @goldsentry/vscode build",
-    "vscode:install": "pnpm vscode:build && node scripts/install-vscode.cjs"
+    "vscode:install": "pnpm vscode:build && node scripts/install-vscode.cjs",
+    "verify:calc": "node scripts/verify-calc.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

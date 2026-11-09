@@ -30,8 +30,10 @@ const els = {
   taskbarTrendRow: document.getElementById('taskbar-trend-row'),
   taskbarTrendOn: document.getElementById('taskbar-trend-on'),
   tabDetail: document.getElementById('tab-detail'),
+  tabCalc: document.getElementById('tab-calc'),
   tabSettings: document.getElementById('tab-settings'),
   viewDetail: document.getElementById('view-detail'),
+  viewCalc: document.getElementById('view-calc'),
   viewSettings: document.getElementById('view-settings'),
   trend: document.getElementById('trend'),
   trendTitle: document.getElementById('trend-title'),
@@ -50,6 +52,30 @@ const els = {
   notifyTest: document.getElementById('notify-test'),
   quit: document.getElementById('quit'),
   quoteTip: document.getElementById('quote-tip'),
+  calcGrams: document.getElementById('calc-grams'),
+  calcCount: document.getElementById('calc-count'),
+  calcCost: document.getElementById('calc-cost'),
+  calcAvg: document.getElementById('calc-avg'),
+  calcBuy: document.getElementById('calc-buy'),
+  calcSell: document.getElementById('calc-sell'),
+  calcDate: document.getElementById('calc-date'),
+  calcGramsInput: document.getElementById('calc-grams-input'),
+  calcPriceInput: document.getElementById('calc-price-input'),
+  calcAdd: document.getElementById('calc-add'),
+  calcError: document.getElementById('calc-error'),
+  calcTotal: document.getElementById('calc-total'),
+  calcAll: document.getElementById('calc-all'),
+  calcDel: document.getElementById('calc-del'),
+  calcRows: document.getElementById('calc-rows'),
+  calcSymbol: document.getElementById('calc-symbol'),
+  calcBuyquote: document.getElementById('calc-buyquote'),
+  calcSellquote: document.getElementById('calc-sellquote'),
+  calcHold: document.getElementById('calc-hold'),
+  calcHoldcost: document.getElementById('calc-holdcost'),
+  calcRealized: document.getElementById('calc-realized'),
+  calcPnl: document.getElementById('calc-pnl'),
+  calcPnlpct: document.getElementById('calc-pnlpct'),
+  calcInvalid: document.getElementById('calc-invalid'),
 };
 
 const TONE_CLASS = { up: 'up', down: 'down', flat: '' };
@@ -509,19 +535,226 @@ els.save.addEventListener('click', () => {
   setTimeout(() => (els.save.textContent = '保存'), 1200);
 });
 
+const calcState = {
+  loaded: false,
+  rows: [],
+  symbols: [],
+  selected: new Set(),
+  symbol: '',
+  side: 'buy',
+};
+
 function selectTab(mode) {
   hoveredSymbol = null;
   hideQuoteTip();
-  const showSettings = mode === 'settings';
-  els.viewDetail.hidden = showSettings;
-  els.viewSettings.hidden = !showSettings;
-  els.tabDetail.classList.toggle('active', !showSettings);
-  els.tabSettings.classList.toggle('active', showSettings);
+  const isDetail = mode === 'detail';
+  const isCalc = mode === 'calc';
+  const isSettings = mode === 'settings';
+  els.viewDetail.hidden = !isDetail;
+  els.viewCalc.hidden = !isCalc;
+  els.viewSettings.hidden = !isSettings;
+  els.tabDetail.classList.toggle('active', isDetail);
+  els.tabCalc.classList.toggle('active', isCalc);
+  els.tabSettings.classList.toggle('active', isSettings);
+  if (isCalc) {
+    if (!calcState.loaded) loadCalc();
+    else refreshCalcStats();
+  }
 }
 
 els.tabDetail.addEventListener('click', () => selectTab('detail'));
+els.tabCalc.addEventListener('click', () => selectTab('calc'));
 els.tabSettings.addEventListener('click', () => selectTab('settings'));
 window.gold.onMode(selectTab);
+
+/* ---------- 计算页：均价 / 持仓 / 模拟盈亏 ---------- */
+
+function localDateKey(date = new Date()) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function calcToneClass(tone) {
+  return tone === 'up' ? 'calc-tone-up' : tone === 'down' ? 'calc-tone-down' : 'calc-tone-flat';
+}
+
+function calcSelectedIds() {
+  return [...calcState.selected];
+}
+
+function showCalcError(text) {
+  els.calcError.textContent = text || '';
+  els.calcError.hidden = !text;
+}
+
+function updateCalcAllLabel() {
+  const all = calcState.rows.map((row) => row.id);
+  const every = all.length > 0 && all.every((id) => calcState.selected.has(id));
+  els.calcAll.textContent = every ? '取消全选' : '全选';
+}
+
+function renderCalcRows() {
+  if (!calcState.rows.length) {
+    els.calcRows.innerHTML = '<p class="calc-empty">还没有记录，先添加一笔买入</p>';
+    return;
+  }
+  els.calcRows.innerHTML = calcState.rows
+    .map(
+      (row) => `<div class="calc-row" data-id="${escAttr(row.id)}">
+        <input type="checkbox" ${calcState.selected.has(row.id) ? 'checked' : ''} aria-label="选择这条记录" />
+        <span class="calc-side-tag ${row.side}">${row.side === 'buy' ? '买入' : '卖出'}</span>
+        <span>${escAttr(row.date)}</span>
+        <span class="calc-mid"><span>克数 ${escAttr(row.gramsText)}</span><span>单价 ${escAttr(row.priceText)}</span></span>
+        <span class="calc-amount"><span>${row.side === 'buy' ? '成本' : '金额'}</span><b>${escAttr(row.amountText)}</b></span>
+      </div>`,
+    )
+    .join('');
+}
+
+function applyCalcBase(base) {
+  calcState.rows = base.rows;
+  calcState.symbols = base.symbols;
+  if (!calcState.symbol || !base.symbols.some((item) => item.symbol === calcState.symbol)) {
+    calcState.symbol = base.symbols.some((item) => item.symbol === base.defaultSymbol)
+      ? base.defaultSymbol
+      : (base.symbols[0]?.symbol ?? '');
+  }
+  els.calcSymbol.innerHTML = base.symbols
+    .map((item) => `<option value="${escAttr(item.symbol)}">${escAttr(item.label)}</option>`)
+    .join('');
+  els.calcSymbol.value = calcState.symbol;
+  els.calcTotal.textContent = `共 ${base.counts.total} 条 · 买入 ${base.counts.buys} / 卖出 ${base.counts.sells}`;
+
+  const present = new Set(base.rows.map((row) => row.id));
+  calcState.selected = calcState.loaded
+    ? new Set([...calcState.selected].filter((id) => present.has(id)))
+    : new Set(base.rows.map((row) => row.id));
+  calcState.loaded = true;
+  renderCalcRows();
+  updateCalcAllLabel();
+}
+
+function applyCalcStats(stats) {
+  els.calcGrams.textContent = stats.selected.gramsText;
+  els.calcCount.textContent = stats.selected.countText;
+  els.calcCost.textContent = stats.selected.costText;
+  els.calcAvg.textContent = stats.selected.avgText;
+
+  els.calcBuyquote.textContent = stats.quote?.buyText ?? '—';
+  els.calcSellquote.textContent = stats.quote?.sellText ?? '—';
+
+  els.calcHold.textContent = stats.ledger.gramsText;
+  els.calcHoldcost.textContent = stats.ledger.costText;
+  els.calcRealized.textContent = stats.ledger.realizedText;
+  els.calcRealized.className = calcToneClass(stats.ledger.realizedTone);
+
+  if (stats.estimate) {
+    els.calcPnl.textContent = stats.estimate.pnlText;
+    els.calcPnl.className = `calc-pnl ${calcToneClass(stats.estimate.tone)}`;
+    els.calcPnlpct.textContent = stats.estimate.pnlPctText;
+  } else {
+    els.calcPnl.textContent = '—';
+    els.calcPnl.className = 'calc-pnl calc-tone-flat';
+    els.calcPnlpct.textContent = '';
+  }
+
+  els.calcInvalid.textContent = stats.ledger.invalidNote;
+  els.calcInvalid.hidden = !stats.ledger.invalidNote;
+}
+
+function refreshCalcStats() {
+  if (!calcState.loaded) return;
+  window.gold.calcSummary({ symbol: calcState.symbol, ids: calcSelectedIds() }).then((result) => {
+    if (result?.ok) applyCalcStats(result.stats);
+  });
+}
+
+function loadCalc() {
+  window.gold.calcLoad({ symbol: calcState.symbol, ids: calcSelectedIds() }).then((result) => {
+    if (!result?.ok) return;
+    applyCalcBase(result.base);
+    refreshCalcStats();
+  });
+}
+
+function setCalcSide(side) {
+  calcState.side = side;
+  els.calcBuy.classList.toggle('on', side === 'buy');
+  els.calcSell.classList.toggle('on', side === 'sell');
+  els.calcAdd.textContent = side === 'buy' ? '添加买入' : '添加卖出';
+  els.calcAdd.classList.toggle('sell', side === 'sell');
+}
+
+els.calcBuy.addEventListener('click', () => setCalcSide('buy'));
+els.calcSell.addEventListener('click', () => setCalcSide('sell'));
+
+els.calcRows.addEventListener('change', (event) => {
+  const box = event.target;
+  if (!(box instanceof HTMLInputElement) || box.type !== 'checkbox') return;
+  const row = box.closest('.calc-row');
+  if (!row) return;
+  if (box.checked) calcState.selected.add(row.dataset.id);
+  else calcState.selected.delete(row.dataset.id);
+  updateCalcAllLabel();
+  refreshCalcStats();
+});
+
+els.calcAll.addEventListener('click', () => {
+  const all = calcState.rows.map((row) => row.id);
+  const every = all.length > 0 && all.every((id) => calcState.selected.has(id));
+  calcState.selected = new Set(every ? [] : all);
+  renderCalcRows();
+  updateCalcAllLabel();
+  refreshCalcStats();
+});
+
+els.calcSymbol.addEventListener('change', () => {
+  calcState.symbol = els.calcSymbol.value;
+  refreshCalcStats();
+});
+
+els.calcAdd.addEventListener('click', async () => {
+  showCalcError('');
+  const result = await window.gold.calcAdd({
+    side: calcState.side,
+    date: els.calcDate.value,
+    grams: Number(els.calcGramsInput.value),
+    price: Number(els.calcPriceInput.value),
+    symbol: calcState.symbol,
+    ids: calcSelectedIds(),
+  });
+  if (!result?.ok) {
+    showCalcError(result?.error ?? '添加失败');
+    return;
+  }
+  if (result.addedId) calcState.selected.add(result.addedId);
+  applyCalcBase(result.base);
+  refreshCalcStats();
+  els.calcGramsInput.value = '';
+  els.calcPriceInput.value = '';
+  els.calcGramsInput.focus();
+});
+
+els.calcDel.addEventListener('click', async () => {
+  showCalcError('');
+  const ids = calcSelectedIds();
+  if (!ids.length) {
+    showCalcError('先勾选要删除的记录');
+    return;
+  }
+  if (!window.confirm(`删除选中的 ${ids.length} 条记录？`)) return;
+  const result = await window.gold.calcRemove({ ids, symbol: calcState.symbol });
+  if (!result?.ok) {
+    showCalcError(result?.error ?? '删除失败');
+    return;
+  }
+  ids.forEach((id) => calcState.selected.delete(id));
+  applyCalcBase(result.base);
+  applyCalcStats(result.stats);
+});
+
+els.calcDate.value = localDateKey();
 
 els.dispName.addEventListener('change', () =>
   window.gold.setDisplay({ name: els.dispName.checked }).then((saved) => fillDisplay(saved.display, saved.arrowMode)),
@@ -636,7 +869,13 @@ els.notifyTest.addEventListener('click', () => window.gold.notifyTest());
 els.quit.addEventListener('click', () => window.gold.quit());
 
 window.addEventListener('scroll', hideQuoteTip, true);
-window.gold.onUpdate(applyState);
+window.gold.onUpdate((next) => {
+  applyState(next);
+  if (!els.viewCalc.hidden) {
+    if (!calcState.loaded || !calcState.symbols.length) loadCalc();
+    else refreshCalcStats();
+  }
+});
 // 悬浮球与任务栏文字都是 Windows 专属，macOS 用菜单栏本身就有的文字位
 window.gold.getCapabilities().then(async (caps) => {
   if (caps.taskbar) {
