@@ -110,11 +110,19 @@ th, td {
   text-overflow: ellipsis;
 }
 
-th:first-child, td:first-child { text-align: left; width: 26%; }
+/* 品种列放下最长的「● 账户金95」（11px 约 61px）即可；写死 px 避免轮询时列宽跟着数字跳 */
+th:first-child, td:first-child { text-align: left; width: 84px; }
 
-th:nth-child(4), td:nth-child(4) { width: 15%; }
+/* 数字列按内容定宽，省出来的宽度摊到各列间隙，品种和买入之间不再空一大截 */
+th:nth-child(2), td:nth-child(2) { width: 62px; }
 
-th:nth-child(6), td:nth-child(6) { width: 17%; }
+th:nth-child(3), td:nth-child(3) { width: 66px; }
+
+th:nth-child(4), td:nth-child(4) { width: 72px; }
+
+th:nth-child(5), td:nth-child(5) { width: 74px; }
+
+th:nth-child(6), td:nth-child(6) { width: 82px; }
 
 th { color: var(--muted); font-weight: 500; font-size: 11px; }
 
