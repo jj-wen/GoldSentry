@@ -405,12 +405,14 @@ function renderRuleRow(row, pending = false) {
   return el;
 }
 
-/** 只有落盘的规则真的变了才重建，否则轮询会把用户正在编辑的行冲掉 */
-let rulesSignature = '';
+/** 只有落盘的规则真的变了才重建，否则轮询会把用户正在编辑的行冲掉；初始必须是 null，空规则表也要渲染新增行 */
+let rulesSignature = null;
 
 function renderRules(next) {
   const rows = next.ruleRows ?? [];
-  const signature = rows.map((r) => `${r.symbol}|${r.kind}|${r.value ?? ''}|${r.enabled ? 1 : 0}`).join('||');
+  // 首次渲染可能还没取到行情；品种选项变了也要重建，否则新增行里没有银行可选
+  const symbolKey = (next.quotes ?? []).map((quote) => quote.symbol).join(',');
+  const signature = `${symbolKey}||${rows.map((r) => `${r.symbol}|${r.kind}|${r.value ?? ''}|${r.enabled ? 1 : 0}`).join('||')}`;
   if (signature === rulesSignature) return;
   rulesSignature = signature;
   els.ruleRows.innerHTML = '';
