@@ -17,6 +17,42 @@ const els = {
   barkSave: document.getElementById('bark-save'),
   barkTest: document.getElementById('bark-test'),
   barkResult: document.getElementById('bark-result'),
+  webhookOn: document.getElementById('webhook-on'),
+  webhookUrl: document.getElementById('webhook-url'),
+  webhookSave: document.getElementById('webhook-save'),
+  webhookTest: document.getElementById('webhook-test'),
+  webhookResult: document.getElementById('webhook-result'),
+  mailOn: document.getElementById('mail-on'),
+  mailHost: document.getElementById('mail-host'),
+  mailPort: document.getElementById('mail-port'),
+  mailSecure: document.getElementById('mail-secure'),
+  mailUser: document.getElementById('mail-user'),
+  mailPass: document.getElementById('mail-pass'),
+  mailFrom: document.getElementById('mail-from'),
+  mailTo: document.getElementById('mail-to'),
+  mailSave: document.getElementById('mail-save'),
+  mailTest: document.getElementById('mail-test'),
+  mailResult: document.getElementById('mail-result'),
+  botOn: document.getElementById('bot-on'),
+  botType: document.getElementById('bot-type'),
+  botUrl: document.getElementById('bot-url'),
+  botSecret: document.getElementById('bot-secret'),
+  botToken: document.getElementById('bot-token'),
+  botChatId: document.getElementById('bot-chat-id'),
+  botUrlRow: document.getElementById('bot-url-row'),
+  botTgRow: document.getElementById('bot-tg-row'),
+  botSave: document.getElementById('bot-save'),
+  botTest: document.getElementById('bot-test'),
+  botResult: document.getElementById('bot-result'),
+  digestOn: document.getElementById('digest-on'),
+  digestTime: document.getElementById('digest-time'),
+  digestSave: document.getElementById('digest-save'),
+  digestResult: document.getElementById('digest-result'),
+  quietOn: document.getElementById('quiet-on'),
+  quietStart: document.getElementById('quiet-start'),
+  quietEnd: document.getElementById('quiet-end'),
+  quietSave: document.getElementById('quiet-save'),
+  quietResult: document.getElementById('quiet-result'),
   ballRow: document.getElementById('ball-row'),
   ballScaleRow: document.getElementById('ball-scale-row'),
   ballHint: document.getElementById('ball-hint'),
@@ -67,18 +103,14 @@ const els = {
   calcAll: document.getElementById('calc-all'),
   calcDel: document.getElementById('calc-del'),
   calcRows: document.getElementById('calc-rows'),
-  calcSymbol: document.getElementById('calc-symbol'),
-  calcBuyquote: document.getElementById('calc-buyquote'),
-  calcSellquote: document.getElementById('calc-sellquote'),
-  calcHold: document.getElementById('calc-hold'),
-  calcHoldcost: document.getElementById('calc-holdcost'),
-  calcRealized: document.getElementById('calc-realized'),
-  calcPnl: document.getElementById('calc-pnl'),
-  calcPnlpct: document.getElementById('calc-pnlpct'),
+  calcSymbolInput: document.getElementById('calc-symbol-input'),
+  calcPositions: document.getElementById('calc-positions'),
   calcInvalid: document.getElementById('calc-invalid'),
 };
 
 const TONE_CLASS = { up: 'up', down: 'down', flat: '' };
+/** 与 core 的 PORTFOLIO_SYMBOL 保持一致：组合盈亏规则不绑具体银行 */
+const PORTFOLIO_SYMBOL = 'PORTFOLIO';
 
 /** 标题属性来自银行接口与 core 常量，拼进 HTML 前一律转义 */
 function escAttr(text) {
@@ -324,8 +356,9 @@ els.trendSvg.addEventListener('pointerleave', hideTrendTip);
 
 function symbolOptions(extra) {
   const list = (state?.quotes ?? []).map((q) => ({ value: q.symbol, text: q.label }));
+  list.push({ value: PORTFOLIO_SYMBOL, text: '组合持仓（总盈亏）' });
   // 规则里可能有已经下线的品种，留着选项才不会把这条悄悄改掉
-  if (extra && !list.some((o) => o.value === extra)) list.push({ value: extra, text: extra });
+  if (extra && extra !== PORTFOLIO_SYMBOL && !list.some((o) => o.value === extra)) list.push({ value: extra, text: extra });
   return list;
 }
 
@@ -339,16 +372,31 @@ function optionTags(items, selected) {
 function renderRuleRow(row, pending = false) {
   const kinds = state?.ruleKinds ?? [];
   const kind = row.kind ?? 'below';
+  const portfolio = kinds.find((k) => k.kind === kind)?.portfolio === true;
   const unitOf = (value) => kinds.find((k) => k.kind === value)?.unit ?? '元/克';
   const el = document.createElement('div');
   el.className = pending ? 'rule-row pending' : 'rule-row';
+  const selectedSymbol = portfolio ? PORTFOLIO_SYMBOL : (pending ? '' : row.symbol);
   el.innerHTML = `${pending ? '' : `<input type="checkbox" class="on" ${row.enabled ? 'checked' : ''} />`}
-    <select class="sym">${pending ? '<option value="" selected>选择品种…</option>' : ''}${optionTags(symbolOptions(pending ? '' : row.symbol), pending ? '' : row.symbol)}</select>
+    <select class="sym"${portfolio ? ' disabled' : ''}>${pending && !portfolio ? '<option value="" selected>选择品种…</option>' : ''}${optionTags(symbolOptions(selectedSymbol), selectedSymbol)}</select>
     <select class="kind">${optionTags(kinds.map((k) => ({ value: k.kind, text: k.text })), kind)}</select>
     <input type="number" class="val" step="0.01" value="${pending ? '' : (row.value ?? '')}" placeholder="${escAttr(unitOf(kind))}" />
     ${pending ? '' : '<button class="del" type="button" title="删除这条提醒">×</button>'}`;
   el.querySelector('.kind').addEventListener('change', (event) => {
-    event.currentTarget.closest('.rule-row').querySelector('.val').placeholder = unitOf(event.currentTarget.value);
+    const nextKind = event.currentTarget.value;
+    const nextPortfolio = kinds.find((k) => k.kind === nextKind)?.portfolio === true;
+    const sym = event.currentTarget.closest('.rule-row').querySelector('.sym');
+    sym.disabled = nextPortfolio;
+    if (nextPortfolio) sym.value = PORTFOLIO_SYMBOL;
+    else if (sym.value === PORTFOLIO_SYMBOL) sym.value = state?.quotes?.[0]?.symbol ?? '';
+    event.currentTarget.closest('.rule-row').querySelector('.val').placeholder = unitOf(nextKind);
+  });
+  // 选了"组合持仓"就自动切到组合盈亏规则，避免用价格方向保存出一条永远不触发的规则
+  el.querySelector('.sym').addEventListener('change', (event) => {
+    if (event.currentTarget.value !== PORTFOLIO_SYMBOL) return;
+    const kindSel = el.querySelector('.kind');
+    kindSel.value = 'pnlPctAbove';
+    kindSel.dispatchEvent(new Event('change', { bubbles: true }));
   });
   if (!pending) {
     el.querySelector('.del').addEventListener('click', (event) => event.currentTarget.closest('.rule-row').remove());
@@ -370,13 +418,17 @@ function renderRules(next) {
 }
 
 function collectRules() {
-  return [...els.ruleRows.querySelectorAll('.rule-row')].map((row) => ({
-    symbol: row.querySelector('.sym').value,
-    kind: row.querySelector('.kind').value,
-    value: row.querySelector('.val').value.trim(),
-    // 末尾的新增行没有勾选，默认就是启用
-    enabled: row.querySelector('.on')?.checked ?? true,
-  }));
+  return [...els.ruleRows.querySelectorAll('.rule-row')].map((row) => {
+    const kind = row.querySelector('.kind').value;
+    const portfolio = (state?.ruleKinds ?? []).find((k) => k.kind === kind)?.portfolio === true;
+    return {
+      symbol: portfolio ? PORTFOLIO_SYMBOL : row.querySelector('.sym').value,
+      kind,
+      value: row.querySelector('.val').value.trim(),
+      // 末尾的新增行没有勾选，默认就是启用
+      enabled: row.querySelector('.on')?.checked ?? true,
+    };
+  });
 }
 
 let state = null;
@@ -394,6 +446,68 @@ function fillBark(bark) {
   els.barkOn.checked = !!bark.enabled;
   els.barkServer.value = bark.server ?? '';
   els.barkKey.value = bark.deviceKey ?? '';
+}
+
+function fillWebhook(webhook) {
+  if (!webhook) return;
+  if (document.activeElement === els.webhookUrl) return;
+  els.webhookOn.checked = !!webhook.enabled;
+  els.webhookUrl.value = webhook.url ?? '';
+}
+
+const MAIL_INPUTS = () => [els.mailHost, els.mailPort, els.mailUser, els.mailPass, els.mailFrom, els.mailTo];
+
+function fillMail(mail) {
+  if (!mail) return;
+  // 正在输入的字段不覆盖；口令框按原值回填，避免轮询把已保存的授权码冲掉
+  if (MAIL_INPUTS().includes(document.activeElement)) return;
+  els.mailOn.checked = !!mail.enabled;
+  els.mailHost.value = mail.host ?? '';
+  els.mailPort.value = String(mail.port ?? 465);
+  els.mailSecure.checked = mail.secure !== false;
+  els.mailUser.value = mail.user ?? '';
+  els.mailPass.value = mail.pass ?? '';
+  els.mailFrom.value = mail.from ?? '';
+  els.mailTo.value = mail.to ?? '';
+}
+
+const BOT_INPUTS = () => [els.botUrl, els.botSecret, els.botToken, els.botChatId];
+
+function updateBotRows() {
+  const telegram = els.botType.value === 'telegram';
+  els.botUrlRow.hidden = telegram;
+  els.botTgRow.hidden = !telegram;
+}
+
+function fillBot(bot) {
+  if (!bot) return;
+  const types = state?.botTypes ?? [];
+  if (types.length && els.botType.options.length !== types.length) {
+    els.botType.innerHTML = optionTags(types.map((item) => ({ value: item.type, text: item.text })), bot.type);
+  }
+  if (BOT_INPUTS().includes(document.activeElement)) return;
+  els.botOn.checked = !!bot.enabled;
+  els.botType.value = bot.type ?? 'feishu';
+  els.botUrl.value = bot.url ?? '';
+  els.botSecret.value = bot.secret ?? '';
+  els.botToken.value = bot.token ?? '';
+  els.botChatId.value = bot.chatId ?? '';
+  updateBotRows();
+}
+
+function fillDigest(digest) {
+  if (!digest) return;
+  if (document.activeElement === els.digestTime) return;
+  els.digestOn.checked = !!digest.enabled;
+  els.digestTime.value = digest.time ?? '08:30';
+}
+
+function fillQuiet(quiet) {
+  if (!quiet) return;
+  if (document.activeElement === els.quietStart || document.activeElement === els.quietEnd) return;
+  els.quietOn.checked = !!quiet.enabled;
+  els.quietStart.value = quiet.start ?? '23:00';
+  els.quietEnd.value = quiet.end ?? '08:00';
 }
 
 const HEALTH_TEXT = { ok: '正常', degraded: '部分异常', offline: '全部失效' };
@@ -460,6 +574,11 @@ function applyState(next) {
   renderTrend(next.trend ?? null, primary?.label ?? '');
   renderRules(next);
   fillBark(next.bark);
+  fillWebhook(next.webhook);
+  fillMail(next.mail);
+  fillBot(next.bot);
+  fillDigest(next.digest);
+  fillQuiet(next.quiet);
   fillBall(next.ball);
   fillTaskbar(next.taskbar);
   fillDisplay(next.display, next.arrowMode);
@@ -526,6 +645,113 @@ els.barkTest.addEventListener('click', async () => {
   els.barkResult.textContent = result.ok
     ? `推送成功（http ${result.status}），看手机`
     : `推送失败：${result.error ?? result.status}`;
+});
+
+els.webhookSave.addEventListener('click', async () => {
+  const next = await window.gold.saveWebhook({
+    enabled: els.webhookOn.checked,
+    url: els.webhookUrl.value.trim(),
+  });
+  applyState(next);
+  els.webhookResult.textContent = next.webhook?.enabled
+    ? '已保存并启用'
+    : '已保存，未启用';
+});
+
+els.webhookTest.addEventListener('click', async () => {
+  els.webhookResult.textContent = '正在推送…';
+  const result = await window.gold.webhookTest(els.webhookUrl.value.trim());
+  els.webhookResult.textContent = result.ok
+    ? `推送成功（http ${result.status}）`
+    : `推送失败：${result.error ?? result.status}`;
+});
+
+function mailForm() {
+  return {
+    enabled: els.mailOn.checked,
+    host: els.mailHost.value.trim(),
+    port: Number(els.mailPort.value) || 465,
+    secure: els.mailSecure.checked,
+    user: els.mailUser.value.trim(),
+    pass: els.mailPass.value,
+    from: els.mailFrom.value.trim(),
+    to: els.mailTo.value.trim(),
+  };
+}
+
+els.mailSave.addEventListener('click', async () => {
+  const next = await window.gold.saveMail(mailForm());
+  applyState(next);
+  const mail = next.mail;
+  els.mailResult.textContent = !mail?.enabled
+    ? '已保存，邮件推送未启用'
+    : !mail.host || !mail.to
+      ? '已保存，但服务器或收件人为空，不会发送'
+      : `已保存并启用，收件人 ${mail.to}`;
+});
+
+els.mailTest.addEventListener('click', async () => {
+  els.mailResult.textContent = '正在发送测试邮件…';
+  const result = await window.gold.mailTest(mailForm());
+  els.mailResult.textContent = result.ok
+    ? `测试邮件已发出（SMTP ${result.status}），请查收`
+    : `发送失败：${result.error ?? result.status}`;
+});
+
+function botForm() {
+  return {
+    enabled: els.botOn.checked,
+    type: els.botType.value,
+    url: els.botUrl.value.trim(),
+    secret: els.botSecret.value.trim(),
+    token: els.botToken.value.trim(),
+    chatId: els.botChatId.value.trim(),
+  };
+}
+
+els.botType.addEventListener('change', updateBotRows);
+
+els.botSave.addEventListener('click', async () => {
+  const next = await window.gold.saveBot(botForm());
+  applyState(next);
+  const bot = next.bot;
+  const filled = bot?.type === 'telegram' ? bot.token && bot.chatId : bot.url;
+  els.botResult.textContent = !bot?.enabled
+    ? '已保存，机器人推送未启用'
+    : filled
+      ? '已保存并启用'
+      : '已保存，但机器人地址/token 未填完整，不会发送';
+});
+
+els.botTest.addEventListener('click', async () => {
+  els.botResult.textContent = '正在推送…';
+  const result = await window.gold.botTest(botForm());
+  els.botResult.textContent = result.ok
+    ? `推送成功（http ${result.status}），到对应群或对话里看`
+    : `推送失败：${result.error ?? result.status}`;
+});
+
+els.digestSave.addEventListener('click', async () => {
+  const next = await window.gold.saveDigest({
+    enabled: els.digestOn.checked,
+    time: els.digestTime.value || '08:30',
+  });
+  applyState(next);
+  els.digestResult.textContent = next.digest?.enabled
+    ? `已保存，每天 ${next.digest.time} 发送`
+    : '已保存，简报关闭';
+});
+
+els.quietSave.addEventListener('click', async () => {
+  const next = await window.gold.saveQuiet({
+    enabled: els.quietOn.checked,
+    start: els.quietStart.value || '23:00',
+    end: els.quietEnd.value || '08:00',
+  });
+  applyState(next);
+  els.quietResult.textContent = next.quiet?.enabled
+    ? `已保存：${next.quiet.start}–${next.quiet.end} 免打扰`
+    : '已保存，免打扰关闭';
 });
 
 els.refresh.addEventListener('click', () => window.gold.refresh().then(applyState));
@@ -604,6 +830,7 @@ function renderCalcRows() {
       (row) => `<div class="calc-row" data-id="${escAttr(row.id)}">
         <input type="checkbox" ${calcState.selected.has(row.id) ? 'checked' : ''} aria-label="选择这条记录" />
         <span class="calc-side-tag ${row.side}">${row.side === 'buy' ? '买入' : '卖出'}</span>
+        <span class="calc-bank">${escAttr(row.symbolText)}</span>
         <span>${escAttr(row.date)}</span>
         <span class="calc-mid"><span>克数 ${escAttr(row.gramsText)}</span><span>单价 ${escAttr(row.priceText)}</span></span>
         <span class="calc-amount"><span>${row.side === 'buy' ? '成本' : '金额'}</span><b>${escAttr(row.amountText)}</b></span>
@@ -620,10 +847,10 @@ function applyCalcBase(base) {
       ? base.defaultSymbol
       : (base.symbols[0]?.symbol ?? '');
   }
-  els.calcSymbol.innerHTML = base.symbols
+  els.calcSymbolInput.innerHTML = base.symbols
     .map((item) => `<option value="${escAttr(item.symbol)}">${escAttr(item.label)}</option>`)
     .join('');
-  els.calcSymbol.value = calcState.symbol;
+  els.calcSymbolInput.value = calcState.symbol;
   els.calcTotal.textContent = `共 ${base.counts.total} 条 · 买入 ${base.counts.buys} / 卖出 ${base.counts.sells}`;
 
   const present = new Set(base.rows.map((row) => row.id));
@@ -641,26 +868,38 @@ function applyCalcStats(stats) {
   els.calcCost.textContent = stats.selected.costText;
   els.calcAvg.textContent = stats.selected.avgText;
 
-  els.calcBuyquote.textContent = stats.quote?.buyText ?? '—';
-  els.calcSellquote.textContent = stats.quote?.sellText ?? '—';
-
-  els.calcHold.textContent = stats.ledger.gramsText;
-  els.calcHoldcost.textContent = stats.ledger.costText;
-  els.calcRealized.textContent = stats.ledger.realizedText;
-  els.calcRealized.className = calcToneClass(stats.ledger.realizedTone);
-
-  if (stats.estimate) {
-    els.calcPnl.textContent = stats.estimate.pnlText;
-    els.calcPnl.className = `calc-pnl ${calcToneClass(stats.estimate.tone)}`;
-    els.calcPnlpct.textContent = stats.estimate.pnlPctText;
+  const positions = stats.positions ?? [];
+  if (!positions.length) {
+    els.calcPositions.innerHTML = '<p class="calc-pos-empty">还没有持仓，先添加一笔买入</p>';
   } else {
-    els.calcPnl.textContent = '—';
-    els.calcPnl.className = 'calc-pnl calc-tone-flat';
-    els.calcPnlpct.textContent = '';
+    const head =
+      '<div class="calc-pos-row calc-pos-head"><span>银行</span><span>持仓</span><span>成本均价</span><span>实时卖出</span><span>模拟浮盈</span></div>';
+    const rows = positions
+      .map(
+        (item) => `<div class="calc-pos-row">
+          <span>${escAttr(item.label)}</span>
+          <span>${escAttr(item.gramsText)}</span>
+          <span>${escAttr(item.avgText)}</span>
+          <span>${escAttr(item.sellText)}</span>
+          <span class="${calcToneClass(item.tone)}">${escAttr(item.pnlText)} <em>${escAttr(item.pnlPctText)}</em></span>
+        </div>`,
+      )
+      .join('');
+    const total = stats.total
+      ? `<div class="calc-pos-row calc-pos-total">
+          <b>合计</b><b>${escAttr(stats.total.gramsText)}</b><b>${escAttr(stats.total.costText)}</b>
+          <b>${escAttr(stats.total.valueText)}</b>
+          <b class="${calcToneClass(stats.total.tone)}">${escAttr(stats.total.pnlText)} <em>${escAttr(stats.total.pnlPctText)}</em></b>
+        </div>`
+      : '';
+    els.calcPositions.innerHTML = head + rows + total;
   }
 
-  els.calcInvalid.textContent = stats.ledger.invalidNote;
-  els.calcInvalid.hidden = !stats.ledger.invalidNote;
+  const note =
+    stats.total?.invalidNote ||
+    (!stats.total?.complete && positions.length ? '有银行缺实时卖出价，合计暂不显示' : '');
+  els.calcInvalid.textContent = note;
+  els.calcInvalid.hidden = !note;
 }
 
 function refreshCalcStats() {
@@ -709,8 +948,10 @@ els.calcAll.addEventListener('click', () => {
   refreshCalcStats();
 });
 
-els.calcSymbol.addEventListener('change', () => {
-  calcState.symbol = els.calcSymbol.value;
+els.calcSymbolInput.addEventListener('change', () => {
+  calcState.symbol = els.calcSymbolInput.value;
+  // 记住默认记账银行，下次打开计算页还用这家
+  window.gold.setCalcSymbol(calcState.symbol);
   refreshCalcStats();
 });
 
@@ -721,7 +962,7 @@ els.calcAdd.addEventListener('click', async () => {
     date: els.calcDate.value,
     grams: Number(els.calcGramsInput.value),
     price: Number(els.calcPriceInput.value),
-    symbol: calcState.symbol,
+    symbol: els.calcSymbolInput.value,
     ids: calcSelectedIds(),
   });
   if (!result?.ok) {

@@ -49,14 +49,17 @@ export async function pollOnce(
       continue;
     }
 
-    for (const quote of fetched) {
-      store.addSample({
+    // 一轮的所有报价一起入库，避免每个品种各写一次大文件
+    store.addSamples(
+      fetched.map((quote) => ({
         symbol: quote.symbol,
         ts: quote.quotedAt,
         buyPrice: quote.buyPrice,
         sellPrice: quote.sellPrice,
-      });
-      // 建行 feed 不给昨收，用本地当日首笔补齐，让所有端都能显示涨跌幅
+      })),
+    );
+    for (const quote of fetched) {
+      // 数据源不给昨收时用本地当日首笔补齐，让所有端都能显示涨跌幅
       if (quote.dayChangePct === undefined || !Number.isFinite(quote.dayChangePct)) {
         quote.dayChangePct = store.dayChangePct(quote.symbol, quote.buyPrice, now) ?? undefined;
       }

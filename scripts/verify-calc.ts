@@ -4,10 +4,12 @@ import {
   calcEstimate,
   calcEstimateText,
   calcLedger,
+  calcLedgersBySymbol,
   calcSelection,
   formatGrams,
   isCalcDate,
   normalizeCalcRecords,
+  portfolioSummary,
   type CalcRecord,
 } from '../packages/core/src/index.ts';
 
@@ -25,8 +27,9 @@ function record(
   grams: number,
   price: number,
   createdAt = 0,
+  symbol = 'ZS',
 ): CalcRecord {
-  return { id, side, date, grams, price, createdAt };
+  return { id, side, symbol, date, grams, price, createdAt };
 }
 
 const near = (a: number, b: number, epsilon = 1e-9) => Math.abs(a - b) < epsilon;
@@ -96,7 +99,50 @@ const blocked = calcDeleteError(
   [record('d1', 'buy', '2026-10-01', 5, 800, 1), record('d2', 'sell', '2026-10-02', 3, 900, 2)],
   ['d1'],
 );
-check('删完买入会让卖出超仓时拦截', blocked !== null, blocked ?? '');
+check('删完买入会让卖出超仓时拦截', blocked !== null && blocked.includes('ZS'), blocked ?? '');
+
+// 6.1) 多银行：删一家银行不会影响另一家的账本
+const mixed = [
+  record('m1', 'buy', '2026-10-01', 5, 800, 1, 'ZS'),
+  record('m2', 'sell', '2026-10-02', 3, 900, 2, 'ZS'),
+  record('m3', 'buy', '2026-10-01', 2, 810, 3, 'GS'),
+  record('m4', 'sell', '2026-10-03', 2, 880, 4, 'GS'),
+];
+const crossBank = [
+  record('c1', 'buy', '2026-10-01', 5, 800, 1, 'ZS'),
+  record('c2', 'sell', '2026-10-02', 3, 900, 2, 'ZS'),
+  record('c3', 'buy', '2026-10-01', 10, 800, 3, 'GS'),
+];
+check('删除另一家银行不影响别家', calcDeleteError(crossBank, ['c3']) === null);
+const afterDelete = crossBank.filter((item) => item.id !== 'c1');
+check('全局账本会掩盖跨行超卖', calcLedger(afterDelete).invalid === false);
+const mixedBlocked = calcDeleteError(crossBank, ['c1']);
+check('按银行校验能拦住跨行超卖并标明银行', mixedBlocked !== null && mixedBlocked.includes('ZS'), mixedBlocked ?? '');
+
+const perBank = calcLedgersBySymbol(mixed);
+check('按银行拆出两本账', perBank.length === 2, JSON.stringify(perBank.map((item) => item.symbol)));
+const zsLedger = perBank.find((item) => item.symbol === 'ZS')?.ledger;
+const gsLedger = perBank.find((item) => item.symbol === 'GS')?.ledger;
+check('浙商账本独立计算', near(zsLedger?.grams ?? 0, 2) && near(zsLedger?.cost ?? 0, 1600), JSON.stringify(zsLedger));
+check('工商账本独立计算', near(gsLedger?.grams ?? 0, 0) && near(gsLedger?.realized ?? 0, 140), JSON.stringify(gsLedger));
+
+// 6.2) 组合汇总：各自实时卖出价，缺价时合计不完整
+const summary = portfolioSummary(mixed, { ZS: 900, GS: 880 });
+check('组合持仓克数合计', summary !== null && near(summary.grams, 2), String(summary?.grams));
+check('组合市值按各自卖出价', summary !== null && near(summary.value, 1800), String(summary?.value));
+check('组合浮动盈亏', summary !== null && near(summary.pnl, 200), String(summary?.pnl));
+check('组合收益率按剩余成本', summary !== null && near(summary.pnlPct ?? 0, 12.5), String(summary?.pnlPct));
+const heldMixed = [...mixed, record('m5', 'buy', '2026-10-04', 1, 820, 5, 'GS')];
+const partial = portfolioSummary(heldMixed, { ZS: 900 });
+check('缺少一家价格时标记不完整', partial !== null && partial.complete === false && partial.pnlPct === null, JSON.stringify(partial));
+check('没有记录时不给组合', portfolioSummary([], { ZS: 900 }) === null);
+
+// 6.3) 旧记录迁移到 fallback 银行
+const migrated = normalizeCalcRecords(
+  [{ id: 'old', side: 'buy', date: '2026-10-01', grams: 1, price: 800, createdAt: 0 }],
+  'GS',
+);
+check('旧记录没有银行时按主显银行迁移', migrated[0]?.symbol === 'GS', JSON.stringify(migrated));
 
 // 7) 模拟盈亏：按实时卖出价估值
 const estimate = calcEstimate(ledger, 950);

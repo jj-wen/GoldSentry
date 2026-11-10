@@ -1,5 +1,5 @@
 import { feeCell } from './fees.ts';
-import { marketSessionAt } from './market.ts';
+import { bankSessionAt } from './market.ts';
 
 /** 金额一律两位小数；缺失或非有限值显示 —，不编数字 */
 export function formatPrice(value: number | undefined): string {
@@ -23,7 +23,7 @@ export interface QuoteCells {
   updateStale: boolean;
 }
 
-/** 「更新」列的文案；休市与否由 marketSessionAt 判定，外壳不自己算 */
+/** 「更新」列的文案；休市与否由 core 的交易时段判定，外壳不自己算 */
 export function updateAgeText(quotedAt: number | undefined, basis: string | undefined, now = Date.now()): string {
   if (typeof quotedAt !== 'number' || !Number.isFinite(quotedAt)) return '未知';
   const minutes = Math.max(0, Math.round((now - quotedAt) / 60000));
@@ -35,6 +35,7 @@ export function updateAgeText(quotedAt: number | undefined, basis: string | unde
 
 export function formatQuoteCells(
   quote: {
+    symbol?: string;
     buyPrice?: number;
     sellPrice?: number;
     dayChangePct?: number;
@@ -44,8 +45,9 @@ export function formatQuoteCells(
   now = Date.now(),
 ): QuoteCells {
   const pct = quote.dayChangePct;
+  // 按这家银行自己的时段判断：收盘的银行报价不动是预期，不能跟着并集市场一起标黄
   const stale =
-    marketSessionAt(now).open &&
+    bankSessionAt(quote.symbol ?? '', now).open &&
     quote.basis === 'realtime' &&
     typeof quote.quotedAt === 'number' &&
     now - quote.quotedAt > 30 * 60000;
@@ -99,7 +101,7 @@ export function clampOpacity(value: unknown, fallback = 0.9): number {
 /** 悬浮球基准边长（100% 缩放时），窗口与 zoomFactor 都按它算 */
 export const BALL_BASE_SIZE = 104;
 /** 太小点不到、太大挡屏幕，缩放只允许这个区间 */
-export const BALL_SCALE_MIN = 0.6;
+export const BALL_SCALE_MIN = 0.4;
 export const BALL_SCALE_MAX = 1.8;
 
 export function clampBallScale(value: unknown, fallback = 1): number {

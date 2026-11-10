@@ -26,9 +26,6 @@ export const PRODUCT_FEES: Record<string, FeeInfo> = {
   GF: { note: '公开报道仅称有费率优惠，未给出具体数字，以银行 App 为准', asOf: '2026-10-20' },
   XY: { spread: 3.8, note: '点差 3.8 元/克（买卖价差，对比表数据更新至 2026.8）', asOf: '2026-08-31' },
   ZX: { spread: 2.7, note: '点差 2.7 元/克（用户核实，以银行 App 为准）', asOf: '2026-11-09' },
-  AU9999: { note: '账户金成本主要体现为点差，未见单独手续费口径', asOf: '2026-11-05' },
-  AU9995: { note: '账户金成本主要体现为点差，未见单独手续费口径', asOf: '2026-11-05' },
-  JJC: { spreadText: '4–6', note: '点差 4–6 元/克（买卖价差；买入价每日 10:30 定价，与实时赎回价混合，不可与实时品种直接对比）', asOf: '2026-08-31' },
 };
 
 export function feeOf(symbol: string): FeeInfo | undefined {

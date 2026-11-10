@@ -103,10 +103,8 @@ function check(label, condition, extra = '') {
   check('goldsentry.show 已注册', commands.has('goldsentry.show'));
   check('旧入口 goldsentry.pick 保留', commands.has('goldsentry.pick'));
   check(
-    'tooltip 标注涨跌幅口径与建行日价',
-    /涨跌幅口径/.test(statusItem.tooltip.value) &&
-      /勿横向比较/.test(statusItem.tooltip.value) &&
-      /建行日价/.test(statusItem.tooltip.value),
+    'tooltip 标注涨跌幅口径',
+    /涨跌幅口径/.test(statusItem.tooltip.value) && /勿横向比较/.test(statusItem.tooltip.value),
   );
   check(
     'tooltip 一家银行一段，不挤成表格',
@@ -124,7 +122,7 @@ function check(label, condition, extra = '') {
   await commands.get('goldsentry.show')();
   const items = quickPicks[0] ?? [];
   check('点击后弹出 QuickPick', quickPicks.length === 1);
-  check('列表覆盖全部品种（>=9）', items.length >= 9, `${items.length} 条`);
+  check('列表覆盖全部品种（>=6）', items.length >= 6, `${items.length} 条`);
   const zs = items.find((i) => i.label.startsWith('浙商'));
   check(
     '每行含买价/卖出/点差/涨跌',
@@ -133,7 +131,6 @@ function check(label, condition, extra = '') {
   );
   check('详情带费用与报价时间', !!zs && /费用/.test(zs.detail) && /报价 \d{2}:\d{2}/.test(zs.detail), zs?.detail);
   check('当前主显品种有标记', !!zs && zs.detail.includes('状态栏显示中'), zs?.detail);
-  check('建行日价排最后（日定价不抢实时位）', items.at(-1)?.label.startsWith('建行'), items.at(-1)?.label);
 
   configUpdates.length = 0;
   quickPickResult = items.find((i) => i.label.startsWith('工商'));

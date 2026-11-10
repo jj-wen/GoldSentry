@@ -43,7 +43,7 @@
         <tbody></tbody>
       </table>
       <div id="quote-tip" class="quote-tip" hidden></div>
-      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序；鼠标悬停任意一行可看该银行的全名、费用口径、报价时间与交易时段。交易日一般 09:00 开市，工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00；周末与法定节假日休市，节前最后一个交易日晚上停夜盘。点差列优先显示买入卖一的点差，点差为 0 时显示服务费。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。建行日价的买入价每日 10:30 定价、赎回价盘中更新，点差不可与实时品种直接比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。</p>
+      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序；鼠标悬停任意一行可看该银行的全名、费用口径、报价时间与交易时段。交易日一般 09:00 开市，工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00；周末与法定节假日休市，节前最后一个交易日晚上停夜盘。点差列优先显示买入卖一的点差，点差为 0 时显示服务费。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。</p>
     </main>
 
     <main id="view-calc" hidden>
@@ -70,6 +70,7 @@
           <button id="calc-buy" class="on" type="button" data-side="buy">买入</button>
           <button id="calc-sell" type="button" data-side="sell">卖出</button>
         </div>
+        <label class="calc-field"><span>银行</span><select id="calc-symbol-input"></select></label>
         <label class="calc-field"><span>日期</span><input id="calc-date" type="date" /></label>
         <div class="calc-pair">
           <label class="calc-field">
@@ -92,24 +93,8 @@
         <div id="calc-rows"></div>
       </section>
       <section class="calc-sim">
-        <div class="calc-sim-row">
-          <span>模拟价格</span>
-          <select id="calc-symbol"></select>
-        </div>
-        <div class="calc-sim-row">
-          <span>实时买入</span><b id="calc-buyquote">—</b>
-          <span>实时卖出</span><b id="calc-sellquote">—</b>
-        </div>
-        <div class="calc-sim-row">
-          <span>当前持仓</span><b id="calc-hold">0g</b>
-          <span>成本</span><b id="calc-holdcost">¥0.00</b>
-          <span>已实现</span><b id="calc-realized">—</b>
-        </div>
-        <div class="calc-sim-row">
-          <span>模拟浮盈</span>
-          <b id="calc-pnl" class="calc-pnl">—</b>
-          <em id="calc-pnlpct"></em>
-        </div>
+        <div class="calc-sim-title">模拟持仓 <em>按各行实时卖出价估值</em></div>
+        <div id="calc-positions" class="calc-positions"></div>
         <p class="calc-invalid" id="calc-invalid" hidden></p>
       </section>
     </main>
@@ -174,7 +159,7 @@
       </div>
       <div class="ball-row" id="ball-scale-row" hidden>
         <span class="lbl">大小</span>
-        <input id="ball-scale" type="range" min="60" max="180" step="10" />
+        <input id="ball-scale" type="range" min="40" max="180" step="10" />
         <span id="ball-scale-val" class="val">—</span>
       </div>
       <p class="hint" id="ball-hint" hidden>球上左键开合详情、右键进设置，拖动移位（位置会记住），滚轮调透明度；大小在设置页等比例缩放。</p>
@@ -203,6 +188,96 @@
         </div>
         <p class="hint" id="bark-result"></p>
         <p class="hint">key 明文存在本机 userData/settings.json，不进仓库；自建 Bark 服务填自己的 https 地址。</p>
+      </section>
+
+      <section class="rules">
+        <div class="rules-head">
+          <span>Webhook 推送</span>
+          <button id="webhook-save" type="button">保存</button>
+        </div>
+        <div class="bark-row">
+          <label class="on"><input type="checkbox" id="webhook-on" /> 启用</label>
+          <input id="webhook-url" type="text" placeholder="https://example.com/hook" spellcheck="false" />
+          <button id="webhook-test" type="button">测试推送</button>
+        </div>
+        <p class="hint" id="webhook-result"></p>
+        <p class="hint">POST JSON：{ title, body, source, ts }；地址里的 token 只存本机，错误信息不会回显完整地址。</p>
+      </section>
+
+      <section class="rules">
+        <div class="rules-head">
+          <span>机器人推送</span>
+          <button id="bot-save" type="button">保存</button>
+        </div>
+        <div class="bark-row">
+          <label class="on"><input type="checkbox" id="bot-on" /> 启用</label>
+          <select id="bot-type"></select>
+          <button id="bot-test" type="button">测试推送</button>
+        </div>
+        <div class="bark-row" id="bot-url-row">
+          <input id="bot-url" type="text" placeholder="飞书/钉钉/企业微信机器人 Webhook" spellcheck="false" />
+          <input id="bot-secret" type="password" placeholder="钉钉加签密钥（可选）" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="bark-row" id="bot-tg-row" hidden>
+          <input id="bot-token" type="password" placeholder="Telegram bot token" autocomplete="off" spellcheck="false" />
+          <input id="bot-chat-id" type="text" placeholder="chat id" spellcheck="false" />
+        </div>
+        <p class="hint" id="bot-result"></p>
+        <p class="hint">飞书/钉钉/企业微信填自定义机器人地址；钉钉开加签时填密钥。Telegram 填 bot token 与 chat id。地址和 token 只存本机 userData/settings.json，错误信息不会回显。</p>
+      </section>
+
+      <section class="rules">
+        <div class="rules-head">
+          <span>邮件推送</span>
+          <button id="mail-save" type="button">保存</button>
+        </div>
+        <div class="bark-row">
+          <label class="on"><input type="checkbox" id="mail-on" /> 启用</label>
+          <input id="mail-host" type="text" placeholder="smtp.qq.com" spellcheck="false" />
+          <input id="mail-port" class="mail-port" type="number" min="1" max="65535" step="1" spellcheck="false" />
+        </div>
+        <div class="bark-row">
+          <label class="on"><input type="checkbox" id="mail-secure" /> SSL</label>
+          <input id="mail-user" type="text" placeholder="账号邮箱" spellcheck="false" />
+          <input id="mail-pass" type="password" placeholder="密码或授权码" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="bark-row">
+          <input id="mail-from" type="text" placeholder="发件人，默认同账号" spellcheck="false" />
+          <input id="mail-to" type="text" placeholder="收件人，多个用逗号分隔" spellcheck="false" />
+          <button id="mail-test" type="button">测试邮件</button>
+        </div>
+        <p class="hint" id="mail-result"></p>
+        <p class="hint">465 端口勾 SSL；587 关闭 SSL 后自动 STARTTLS（服务器不支持时会拒绝发送，避免明文传口令）。账号与授权码只存本机 userData/settings.json；QQ/163 等要填授权码，不是登录密码。</p>
+      </section>
+
+      <section class="rules">
+        <div class="rules-head">
+          <span>每日简报</span>
+          <button id="digest-save" type="button">保存</button>
+        </div>
+        <div class="bark-row">
+          <label class="on"><input type="checkbox" id="digest-on" /> 启用</label>
+          <span class="lbl">发送时间</span>
+          <input id="digest-time" type="time" value="08:30" />
+        </div>
+        <p class="hint" id="digest-result"></p>
+        <p class="hint">每天到点汇总最近一个已结束交易日的开/收/高/低与涨跌幅，选中的银行排第一；计算页有记录时追加模拟持仓与当日收益。走已启用的推送通道，同一天只发一次。</p>
+      </section>
+
+      <section class="rules">
+        <div class="rules-head">
+          <span>免打扰时段</span>
+          <button id="quiet-save" type="button">保存</button>
+        </div>
+        <div class="bark-row">
+          <label class="on"><input type="checkbox" id="quiet-on" /> 启用</label>
+          <span class="lbl">从</span>
+          <input id="quiet-start" type="time" value="23:00" />
+          <span class="lbl">到</span>
+          <input id="quiet-end" type="time" value="08:00" />
+        </div>
+        <p class="hint" id="quiet-result"></p>
+        <p class="hint">时段内不弹系统通知、不发 Bark/Webhook；行情照常刷新，结束时不补发。</p>
       </section>
 
       <div class="foot-row">

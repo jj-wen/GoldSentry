@@ -1,5 +1,5 @@
 import type { Quote, QuoteSource } from './types.ts';
-import { marketSessionAt } from './market.ts';
+import { bankSessionAt, marketSessionAt } from './market.ts';
 
 export type HealthStatus = 'ok' | 'degraded' | 'offline';
 
@@ -28,23 +28,27 @@ export function assessHealth(
 ): HealthReport {
   const reasons: string[] = [];
 
+  const session = marketSessionAt(now);
+  const market = { marketClosed: !session.open, closedReason: session.reason };
+
+  // 休市期间银行的行情服务本来就可能取不到数据或返回空，属于预期行为：
+  // 不判异常、不发通知，等开市后仍取不到再报
+  if (!session.open) return { status: 'ok', reasons: [], ...market };
+
   for (const error of errors) reasons.push(error);
 
-  const session = marketSessionAt(now);
-  // 休市（周末/节假日/开市前）报价冻结是预期行为，只有开市期间的冻结才是静默失效
-  if (session.open) {
-    const alive = new Set(quotes.map((q) => q.sourceId));
-    for (const source of sources) {
-      if (!alive.has(source.id)) continue;
-      const mine = quotes.filter((q) => q.sourceId === source.id);
-      const stale = mine.filter((q) => isStale(q, now));
-      if (stale.length === mine.length && mine.length > 0) {
-        reasons.push(`${source.id} 返回成功但全部报价陈旧（最久 ${Math.round(Math.max(...stale.map((q) => now - q.quotedAt)) / 60000)} 分钟未更新）`);
-      }
+  // 开市期间的旧报价/冻结才可能是静默失效；收盘银行的报价不动是预期
+  const alive = new Set(quotes.map((q) => q.sourceId));
+  for (const source of sources) {
+    if (!alive.has(source.id)) continue;
+    const mine = quotes.filter((q) => q.sourceId === source.id && bankSessionAt(q.symbol, now).open);
+    if (!mine.length) continue;
+    const stale = mine.filter((q) => isStale(q, now));
+    if (stale.length === mine.length) {
+      reasons.push(`${source.id} 返回成功但全部报价陈旧（最久 ${Math.round(Math.max(...stale.map((q) => now - q.quotedAt)) / 60000)} 分钟未更新）`);
     }
   }
 
-  const market = { marketClosed: !session.open, closedReason: session.reason };
   if (quotes.length === 0) return { status: 'offline', reasons: reasons.length ? reasons : ['没有任何可用报价'], ...market };
   if (reasons.length) return { status: 'degraded', reasons, ...market };
   return { status: 'ok', reasons: [], ...market };

@@ -7,10 +7,10 @@ export interface TrendSampleLike {
   buyPrice: number;
 }
 
-/** 分时图可选的时间跨度；day 是自然日 00:00–24:00，其余从区间末端往回截 */
-export type TrendRange = '30m' | '1h' | '2h' | '4h' | '6h' | '12h' | 'day';
+/** 分时图可选的时间跨度；day 是自然日 00:00–24:00，7d/10d 从当前时刻往回截 */
+export type TrendRange = '30m' | '1h' | '2h' | '4h' | '6h' | '12h' | 'day' | '7d' | '10d';
 
-export const TREND_RANGE_ORDER: TrendRange[] = ['30m', '1h', '2h', '4h', '6h', '12h', 'day'];
+export const TREND_RANGE_ORDER: TrendRange[] = ['30m', '1h', '2h', '4h', '6h', '12h', 'day', '7d', '10d'];
 
 export const TREND_RANGE_TEXT: Record<TrendRange, string> = {
   '30m': '30 分钟',
@@ -20,6 +20,8 @@ export const TREND_RANGE_TEXT: Record<TrendRange, string> = {
   '6h': '6 小时',
   '12h': '半天',
   day: '全天',
+  '7d': '7 天',
+  '10d': '10 天',
 };
 
 const TREND_RANGE_MS: Record<TrendRange, number> = {
@@ -30,6 +32,8 @@ const TREND_RANGE_MS: Record<TrendRange, number> = {
   '6h': 6 * 60 * 60_000,
   '12h': 12 * 60 * 60_000,
   day: 86_400_000,
+  '7d': 7 * 86_400_000,
+  '10d': 10 * 86_400_000,
 };
 
 export const DEFAULT_TREND_SETTINGS: TrendSettings = { enabled: true, range: 'day' };
@@ -141,6 +145,7 @@ export function dayTrendSeries(
 ): TrendSeries {
   const maxPoints = Math.max(2, options.maxPoints ?? TREND_MAX_POINTS);
   const range = normalizeTrendRange(options.range);
+  const multiDay = range === '7d' || range === '10d';
   const todayKey = beijingDateKey(now);
   const byDay = new Map<string, TrendSampleLike[]>();
 
@@ -153,8 +158,10 @@ export function dayTrendSeries(
     else byDay.set(day, [sample]);
   }
 
-  const day = pickDay(byDay, todayKey, options.preferPreviousDay === true);
-  const raw = [...(byDay.get(day) ?? [])].sort((a, b) => a.ts - b.ts);
+  const day = multiDay ? todayKey : pickDay(byDay, todayKey, options.preferPreviousDay === true);
+  const raw = (
+    multiDay ? [...byDay.values()].flat() : [...(byDay.get(day) ?? [])]
+  ).sort((a, b) => a.ts - b.ts);
 
   // 同一时间戳（手动刷新撞上轮询）只保留最后一笔
   const unique: TrendSampleLike[] = [];
@@ -170,24 +177,37 @@ export function dayTrendSeries(
   // 今天的窗口截到现在；回退到历史日则截到当天最后一笔，避免右侧一大段空白
   const lastTs = unique.length ? unique[unique.length - 1].ts : null;
   let windowEnd = dayEnd;
-  if (range !== 'day') {
-    const anchor = isToday ? now : (lastTs ?? dayEnd);
-    windowEnd = Math.min(Math.max(anchor, dayStart), dayEnd);
+  let windowStart: number;
+  if (multiDay) {
+    // 多日窗口从当前时刻往回截，休市时也保持一致的宽度
+    windowEnd = now;
+    windowStart = now - TREND_RANGE_MS[range];
+  } else {
+    if (range !== 'day') {
+      const anchor = isToday ? now : (lastTs ?? dayEnd);
+      windowEnd = Math.min(Math.max(anchor, dayStart), dayEnd);
+    }
+    const span = TREND_RANGE_MS[range];
+    windowStart = range === 'day' ? dayStart : Math.max(dayStart, windowEnd - span);
   }
-  const span = TREND_RANGE_MS[range];
-  const windowStart = range === 'day' ? dayStart : Math.max(dayStart, windowEnd - span);
 
   const inWindow = unique.filter((sample) => sample.ts >= windowStart && sample.ts <= windowEnd);
   const points: TrendPoint[] = [];
   const sampled = downsample(inWindow, maxPoints);
+  // 多日图降采样后点距本来就有 40–60 分钟，仍按 30 分钟断线会碎成一个个点
+  const gapMs = multiDay
+    ? Math.max(TREND_GAP_MS, ((windowEnd - windowStart) / Math.max(1, maxPoints - 1)) * 1.5)
+    : TREND_GAP_MS;
   for (let i = 0; i < sampled.length; i += 1) {
     const sample = sampled[i];
     points.push({
       ts: sample.ts,
       price: sample.buyPrice,
       text: formatPrice(sample.buyPrice),
-      timeText: beijingHhmm(sample.ts),
-      gap: i > 0 && sample.ts - sampled[i - 1].ts > TREND_GAP_MS,
+      timeText: multiDay
+        ? `${beijingDateKey(sample.ts).slice(5)} ${beijingHhmm(sample.ts)}`
+        : beijingHhmm(sample.ts),
+      gap: i > 0 && sample.ts - sampled[i - 1].ts > gapMs,
     });
   }
 
@@ -211,8 +231,18 @@ export function dayTrendSeries(
     windowEnd,
     range,
     rangeText: TREND_RANGE_TEXT[range],
-    windowText: `${isToday ? '今日' : day.slice(5)} · ${TREND_RANGE_TEXT[range]}`,
-    axisLabels: range === 'day' ? ['00:00', '12:00', '24:00'] : [beijingHhmm(windowStart), beijingHhmm(mid), beijingHhmm(windowEnd)],
+    windowText: multiDay
+      ? `近 ${TREND_RANGE_TEXT[range]}`
+      : `${isToday ? '今日' : day.slice(5)} · ${TREND_RANGE_TEXT[range]}`,
+    axisLabels: multiDay
+      ? [
+          beijingDateKey(windowStart).slice(5),
+          beijingDateKey(mid).slice(5),
+          beijingDateKey(windowEnd).slice(5),
+        ]
+      : range === 'day'
+        ? ['00:00', '12:00', '24:00']
+        : [beijingHhmm(windowStart), beijingHhmm(mid), beijingHhmm(windowEnd)],
     isToday,
     points,
     open,

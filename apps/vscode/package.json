@@ -1,7 +1,7 @@
 {
   "name": "@goldsentry/vscode",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "displayName": "GoldSentry 积存金监控",
   "description": "在 VS Code 状态栏监控多家银行积存金实时价并做到价提醒",
   "publisher": "goldsentry",
@@ -64,9 +64,7 @@
             "GS",
             "GF",
             "XY",
-            "ZX",
-            "AU9999",
-            "JJC"
+            "ZX"
           ],
           "description": "状态栏默认显示品种"
         },
@@ -99,6 +97,112 @@
           "type": "boolean",
           "default": true,
           "description": "下跌时是否显示涨跌箭头（绿）"
+        },
+        "goldsentry.webhookUrl": {
+          "type": "string",
+          "default": "",
+          "description": "通用 Webhook 地址（POST JSON：title/body/source/ts），留空则不推送"
+        },
+        "goldsentry.emailEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "通过 SMTP 发送邮件推送"
+        },
+        "goldsentry.emailHost": {
+          "type": "string",
+          "default": "",
+          "description": "SMTP 服务器主机名，如 smtp.qq.com"
+        },
+        "goldsentry.emailPort": {
+          "type": "number",
+          "default": 465,
+          "description": "SMTP 端口，465 用 SSL，587 走 STARTTLS"
+        },
+        "goldsentry.emailSecure": {
+          "type": "boolean",
+          "default": true,
+          "description": "465 隐式 SSL；关闭后 587 会自动 STARTTLS"
+        },
+        "goldsentry.emailUser": {
+          "type": "string",
+          "default": "",
+          "description": "SMTP 账号邮箱，留空表示不认证"
+        },
+        "goldsentry.emailPass": {
+          "type": "string",
+          "default": "",
+          "description": "SMTP 密码或授权码（明文存在 VS Code 设置里，注意不要分享配置）"
+        },
+        "goldsentry.emailFrom": {
+          "type": "string",
+          "default": "",
+          "description": "发件人邮箱，留空同账号"
+        },
+        "goldsentry.emailTo": {
+          "type": "string",
+          "default": "",
+          "description": "收件人邮箱，多个用逗号分隔"
+        },
+        "goldsentry.botEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用飞书/钉钉/企业微信/Telegram 机器人推送"
+        },
+        "goldsentry.botType": {
+          "type": "string",
+          "default": "feishu",
+          "enum": [
+            "feishu",
+            "dingtalk",
+            "wecom",
+            "telegram"
+          ],
+          "description": "机器人平台"
+        },
+        "goldsentry.botUrl": {
+          "type": "string",
+          "default": "",
+          "description": "飞书/钉钉/企业微信机器人 Webhook 地址"
+        },
+        "goldsentry.botSecret": {
+          "type": "string",
+          "default": "",
+          "description": "钉钉加签密钥（可选）"
+        },
+        "goldsentry.botToken": {
+          "type": "string",
+          "default": "",
+          "description": "Telegram bot token"
+        },
+        "goldsentry.botChatId": {
+          "type": "string",
+          "default": "",
+          "description": "Telegram chat id"
+        },
+        "goldsentry.digestEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "每天发送积存金日报"
+        },
+        "goldsentry.digestTime": {
+          "type": "string",
+          "default": "08:30",
+          "description": "日报发送时间（北京时间 HH:MM）"
+        },
+        "goldsentry.quietEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用免打扰时段"
+        },
+        "goldsentry.quietStart": {
+          "type": "string",
+          "default": "23:00",
+          "description": "免打扰开始时间（北京时间 HH:MM）"
+        },
+        "goldsentry.quietEnd": {
+          "type": "string",
+          "default": "08:00",
+          "description": "免打扰结束时间（北京时间 HH:MM）"
         }
       }
     }

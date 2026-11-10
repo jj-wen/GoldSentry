@@ -25,7 +25,7 @@ function drawStrip(data: StatusStripInput): string {
   const PCT_SIZE = 12;
   // 用户要求：文字跟随系统但颜色反着来——深色模式黑字、浅色模式白字
   const text = data.dark ? '#000000' : '#ffffff';
-  const tone = data.tone === 'up' ? '#ef5350' : data.tone === 'down' ? '#26a269' : text;
+  const tone = data.tone === 'up' ? '#ef5350' : data.tone === 'down' ? '#30d158' : text;
   const TRI = 10;
   const GAP = 5;
 

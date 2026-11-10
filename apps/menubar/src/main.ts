@@ -24,6 +24,8 @@ import {
   backoffSeconds,
   ballSizeFor,
   bankSessionAt,
+  BOT_TYPE_ORDER,
+  BOT_TYPE_TEXT,
   calcAmount,
   calcDeleteError,
   calcEstimate,
@@ -38,32 +40,48 @@ import {
   DEFAULT_TREND_SETTINGS,
   detectTaskbar,
   displayFromArrowMode,
+  evaluatePortfolioRules,
   feeCell,
   formatGrams,
   formatPct,
   formatPrice,
   formatQuoteCells,
   isCalcDate,
+  isPortfolioKind,
+  JD_SYMBOLS,
+  normalizeBotType,
   normalizeCalcRecords,
   normalizeDisplay,
   normalizeSymbolOrder,
   normalizeTrendSettings,
   OPACITY_MAX,
   OPACITY_MIN,
+  PORTFOLIO_SYMBOL,
+  portfolioSummary,
   placeOnTaskbar,
   priceTone,
   QuoteStore,
   pollOnce,
   ruleKindOf,
+  ruleValueOf,
   RULE_KIND_ORDER,
   RULE_KIND_TEXT,
   RULE_KIND_UNIT,
   scaledSquare,
   sendAlertsToBark,
+  sendAlertsToBot,
+  sendAlertsToMail,
+  sendAlertsToWebhook,
   sendBark,
+  sendBot,
+  sendMail,
+  sendWebhook,
   showArrow,
   sources,
   spreadCell,
+  timeReached,
+  inQuietHours,
+  parseHhmm,
   tradingHoursOf,
   TASKBAR_END_MARGIN,
   TREND_RANGE_ORDER,
@@ -72,11 +90,14 @@ import {
   type AlertRule,
   type ArrowMode,
   type BarkConfig,
+  type BotConfig,
+  type BotType,
   type CalcRecord,
   type CalcSide,
   type DisplayToggles,
   type FiredAlert,
   type HealthReport,
+  type MailConfig,
   type PriceTone,
   type Quote,
   type QuoteCells,
@@ -152,9 +173,12 @@ interface State {
   cells: Record<string, QuoteCells>;
   spreadCells: Record<string, SpreadCell>;
   details: Record<string, BankDetail>;
-  ruleKinds: Array<{ kind: RuleKind; text: string; unit: string }>;
+  ruleKinds: Array<{ kind: RuleKind; text: string; unit: string; portfolio: boolean }>;
   ruleRows: Array<{ symbol: string; kind: RuleKind; value: number | undefined; enabled: boolean }>;
   bark: Settings['bark'];
+  webhook: Settings['webhook'];
+  digest: Settings['digest'];
+  quiet: Settings['quiet'];
   ball: Settings['ball'];
   taskbar: Settings['taskbar'];
   health: HealthReport;
@@ -164,6 +188,9 @@ interface State {
   spark: TrendSparkline | null;
   trendSettings: TrendSettings;
   trendRanges: Array<{ range: TrendRange; text: string }>;
+  mail: Settings['mail'];
+  bot: Settings['bot'];
+  botTypes: Array<{ type: BotType; text: string }>;
 }
 
 let state: State = {
@@ -184,26 +211,33 @@ let state: State = {
   cells: {},
   spreadCells: {},
   details: {},
-  ruleKinds: RULE_KIND_ORDER.map((kind) => ({ kind, text: RULE_KIND_TEXT[kind], unit: RULE_KIND_UNIT[kind] })),
+  ruleKinds: RULE_KIND_ORDER.map((kind) => ({
+    kind,
+    text: RULE_KIND_TEXT[kind],
+    unit: RULE_KIND_UNIT[kind],
+    portfolio: isPortfolioKind(kind),
+  })),
   ruleRows: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
+  webhook: { enabled: false, url: '' },
+  digest: { enabled: true, time: '08:30' },
+  quiet: { enabled: false, start: '23:00', end: '08:00' },
   ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
   taskbar: { enabled: true, offset: null, trend: false },
   health: { status: 'ok', reasons: [], marketClosed: false, closedReason: '' },
   trend: null,
   spark: null,
   trendSettings: { enabled: true, range: 'day' },
-  trendRanges: [
-    { range: '1h', text: '1 小时' },
-    { range: '12h', text: '半天' },
-    { range: 'day', text: '全天' },
-  ],
+  trendRanges: TREND_RANGE_ORDER.map((range) => ({ range, text: TREND_RANGE_TEXT[range] })),
+  mail: { enabled: false, host: '', port: 465, secure: true, user: '', pass: '', from: '', to: '' },
+  bot: { enabled: false, type: 'feishu', url: '', secret: '', token: '', chatId: '' },
+  botTypes: BOT_TYPE_ORDER.map((type) => ({ type, text: BOT_TYPE_TEXT[type] })),
 };
 
 /** 下拉框选项与滑杆区间都来自 core，面板不自己写死 */
 function buildUiModels(): Pick<
   State,
-  'arrowMode' | 'arrowModes' | 'ballScale' | 'trendSettings' | 'trendRanges'
+  'arrowMode' | 'arrowModes' | 'ballScale' | 'trendSettings' | 'trendRanges' | 'botTypes'
 > {
   return {
     arrowMode: arrowModeOf(settings.display),
@@ -211,17 +245,22 @@ function buildUiModels(): Pick<
     ballScale: { min: BALL_SCALE_MIN, max: BALL_SCALE_MAX },
     trendSettings: settings.trend,
     trendRanges: TREND_RANGE_ORDER.map((range) => ({ range, text: TREND_RANGE_TEXT[range] })),
+    botTypes: BOT_TYPE_ORDER.map((type) => ({ type, text: BOT_TYPE_TEXT[type] })),
   };
 }
 
 /** 提醒行的下拉选项与回填值都由 core 算，面板只渲染 */
 function buildRuleModels(): Pick<State, 'ruleKinds' | 'ruleRows'> {
   return {
-    ruleKinds: RULE_KIND_ORDER.map((kind) => ({ kind, text: RULE_KIND_TEXT[kind], unit: RULE_KIND_UNIT[kind] })),
+    ruleKinds: RULE_KIND_ORDER.map((kind) => ({
+      kind,
+      text: RULE_KIND_TEXT[kind],
+      unit: RULE_KIND_UNIT[kind],
+      portfolio: isPortfolioKind(kind),
+    })),
     ruleRows: rules.map((rule) => {
       const kind = ruleKindOf(rule);
-      const value = kind === 'swing' ? rule.absDayChangePct : kind === 'above' ? rule.above : rule.below;
-      return { symbol: rule.symbol, kind, value, enabled: rule.enabled };
+      return { symbol: rule.symbol, kind, value: ruleValueOf(rule), enabled: rule.enabled };
     }),
   };
 }
@@ -246,13 +285,8 @@ function buildBankDetails(quotes: Quote[]): { details: Record<string, BankDetail
     const fee = feeCell(quote.symbol);
     details[quote.symbol] = {
       name: quote.name,
-      source: quote.sourceId === 'jd' ? '京东金融代销' : quote.sourceId === 'ccb' ? '建设银行公开行情' : quote.sourceId,
-      basis:
-        quote.basis === 'realtime'
-          ? '实时报价'
-          : quote.basis === 'dailyFix'
-            ? '每日 10:30 定价'
-            : quote.basis,
+      source: quote.sourceId === 'jd' ? '京东金融代销' : quote.sourceId,
+      basis: quote.basis === 'realtime' ? '实时报价' : quote.basis,
       hours: hours?.text ?? '—',
       hoursNote: hours?.note ?? '',
       session: session.text,
@@ -274,17 +308,16 @@ function buildBankDetails(quotes: Quote[]): { details: Record<string, BankDetail
 function loadRules(): AlertRule[] {
   try {
     const raw = JSON.parse(readFileSync(rulesFile, 'utf8'));
-    if (Array.isArray(raw) && raw.length) return raw as AlertRule[];
+    if (Array.isArray(raw)) {
+      const kept = (raw as AlertRule[]).filter((rule) => !RETIRED_SYMBOLS.has(rule?.symbol ?? ''));
+      if (kept.length !== raw.length) writeFileSync(rulesFile, JSON.stringify(kept, null, 2));
+      return kept;
+    }
   } catch {
-    /* 没有文件时用默认阈值落盘，方便用户直接改 */
+    /* 没有文件时创建空列表，提醒全部在面板里维护 */
   }
-  const seeded: AlertRule[] = [
-    { id: 'JJC-below', symbol: 'JJC', enabled: false, below: 880, cooldownMinutes: 120 },
-    { id: 'JJC-above', symbol: 'JJC', enabled: false, above: 900, cooldownMinutes: 120 },
-    { id: 'AU9999-swing', symbol: 'AU9999', enabled: false, absDayChangePct: 1, cooldownMinutes: 60 },
-  ];
-  writeFileSync(rulesFile, JSON.stringify(seeded, null, 2));
-  return seeded;
+  writeFileSync(rulesFile, '[]');
+  return [];
 }
 
 function saveRules(): void {
@@ -293,11 +326,34 @@ function saveRules(): void {
 
 interface Settings {
   primarySymbol: string;
+  /** 计算页上次选的估值银行；空表示跟随主显品种 */
+  calcSymbol: string;
   pollSeconds: number;
   launchAtLogin: boolean;
   display: DisplayToggles;
   symbolOrder: string[];
   bark: { enabled: boolean; server: string; deviceKey: string };
+  webhook: { enabled: boolean; url: string };
+  mail: {
+    enabled: boolean;
+    host: string;
+    port: number;
+    secure: boolean;
+    user: string;
+    pass: string;
+    from: string;
+    to: string;
+  };
+  bot: {
+    enabled: boolean;
+    type: BotType;
+    url: string;
+    secret: string;
+    token: string;
+    chatId: string;
+  };
+  digest: { enabled: boolean; time: string };
+  quiet: { enabled: boolean; start: string; end: string };
   ball: { enabled: boolean; opacity: number; scale: number; x: number | null; y: number | null };
   taskbar: { enabled: boolean; offset: number | null; trend: boolean };
   trend: TrendSettings;
@@ -305,25 +361,68 @@ interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   primarySymbol: 'ZS',
+  calcSymbol: '',
   pollSeconds: 30,
   launchAtLogin: false,
   display: DEFAULT_DISPLAY,
   symbolOrder: [],
   bark: { enabled: false, server: 'https://api.day.app', deviceKey: '' },
+  webhook: { enabled: false, url: '' },
+  mail: { enabled: false, host: '', port: 465, secure: true, user: '', pass: '', from: '', to: '' },
+  bot: { enabled: false, type: 'feishu', url: '', secret: '', token: '', chatId: '' },
+  digest: { enabled: true, time: '08:30' },
+  quiet: { enabled: false, start: '23:00', end: '08:00' },
   ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
   taskbar: { enabled: true, offset: null, trend: false },
   trend: DEFAULT_TREND_SETTINGS,
 };
+
+/** 建行相关品种已停止监测，旧配置里的提醒与排序一并清掉 */
+const RETIRED_SYMBOLS = new Set(['JJC', 'AU9999', 'AU9995']);
 
 let settings: Settings = {
   ...DEFAULT_SETTINGS,
   display: { ...DEFAULT_DISPLAY },
   symbolOrder: [],
   bark: { ...DEFAULT_SETTINGS.bark },
+  webhook: { ...DEFAULT_SETTINGS.webhook },
+  mail: { ...DEFAULT_SETTINGS.mail },
+  bot: { ...DEFAULT_SETTINGS.bot },
+  digest: { ...DEFAULT_SETTINGS.digest },
+  quiet: { ...DEFAULT_SETTINGS.quiet },
   ball: { ...DEFAULT_SETTINGS.ball },
   taskbar: { ...DEFAULT_SETTINGS.taskbar },
   trend: { ...DEFAULT_TREND_SETTINGS },
 };
+
+/** 邮件配置要逐字段清洗：端口、协议开关都可能有历史脏值；口令只留在本机 */
+function normalizeMail(raw: unknown, base: Settings['mail']): Settings['mail'] {
+  const value = (raw ?? {}) as Partial<Settings['mail']>;
+  const port = Number(value.port);
+  return {
+    enabled: value.enabled === true,
+    host: String(value.host ?? '').trim(),
+    port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : base.port,
+    secure: value.secure !== false,
+    user: String(value.user ?? '').trim(),
+    pass: String(value.pass ?? ''),
+    from: String(value.from ?? '').trim(),
+    to: String(value.to ?? '').trim(),
+  };
+}
+
+/** 机器人地址/token 同样只留在本机；类型和白名单外的值会被清洗 */
+function normalizeBot(raw: unknown, base: Settings['bot']): Settings['bot'] {
+  const value = (raw ?? {}) as Partial<Settings['bot']>;
+  return {
+    enabled: value.enabled === true,
+    type: normalizeBotType(value.type ?? base.type),
+    url: String(value.url ?? '').trim(),
+    secret: String(value.secret ?? '').trim(),
+    token: String(value.token ?? '').trim(),
+    chatId: String(value.chatId ?? '').trim(),
+  };
+}
 
 /** deviceKey 明文落在 userData/settings.json（不在仓库里），面板输入框用 password 遮罩 */
 function loadSettings(): Settings {
@@ -332,13 +431,31 @@ function loadSettings(): Settings {
   try {
     const raw = JSON.parse(readFileSync(settingsFile, 'utf8'));
     const seconds = Number(raw.pollSeconds);
+    const primarySymbol = String(raw.primarySymbol ?? DEFAULT_SETTINGS.primarySymbol);
+    const calcSymbol = String(raw.calcSymbol ?? '');
     return {
-      primarySymbol: String(raw.primarySymbol ?? DEFAULT_SETTINGS.primarySymbol),
+      primarySymbol: RETIRED_SYMBOLS.has(primarySymbol) ? DEFAULT_SETTINGS.primarySymbol : primarySymbol,
+      calcSymbol: RETIRED_SYMBOLS.has(calcSymbol) ? '' : calcSymbol,
       pollSeconds: ALLOWED_INTERVALS.includes(seconds) ? seconds : DEFAULT_SETTINGS.pollSeconds,
       launchAtLogin: raw.launchAtLogin === true,
       display: normalizeDisplay(raw.display),
-      symbolOrder: normalizeSymbolOrder(raw.symbolOrder),
+      symbolOrder: normalizeSymbolOrder(raw.symbolOrder).filter((symbol) => !RETIRED_SYMBOLS.has(symbol)),
       bark: { ...DEFAULT_SETTINGS.bark, ...(raw.bark ?? {}) },
+      webhook: {
+        enabled: raw.webhook?.enabled === true,
+        url: String(raw.webhook?.url ?? '').trim(),
+      },
+      mail: normalizeMail(raw.mail, DEFAULT_SETTINGS.mail),
+      bot: normalizeBot(raw.bot, DEFAULT_SETTINGS.bot),
+      digest: {
+        enabled: raw.digest?.enabled !== false,
+        time: parseHhmm(raw.digest?.time) === null ? DEFAULT_SETTINGS.digest.time : String(raw.digest.time),
+      },
+      quiet: {
+        enabled: raw.quiet?.enabled === true,
+        start: parseHhmm(raw.quiet?.start) === null ? DEFAULT_SETTINGS.quiet.start : String(raw.quiet.start),
+        end: parseHhmm(raw.quiet?.end) === null ? DEFAULT_SETTINGS.quiet.end : String(raw.quiet.end),
+      },
       ball: {
         enabled: raw.ball?.enabled !== false,
         opacity: clampOpacity(raw.ball?.opacity, DEFAULT_SETTINGS.ball.opacity),
@@ -358,6 +475,11 @@ function loadSettings(): Settings {
       ...DEFAULT_SETTINGS,
       display: { ...DEFAULT_DISPLAY },
       bark: { ...DEFAULT_SETTINGS.bark },
+      webhook: { ...DEFAULT_SETTINGS.webhook },
+      mail: { ...DEFAULT_SETTINGS.mail },
+      bot: { ...DEFAULT_SETTINGS.bot },
+      digest: { ...DEFAULT_SETTINGS.digest },
+      quiet: { ...DEFAULT_SETTINGS.quiet },
       ball: { ...DEFAULT_SETTINGS.ball },
       taskbar: { ...DEFAULT_SETTINGS.taskbar },
       trend: { ...DEFAULT_TREND_SETTINGS },
@@ -374,6 +496,8 @@ function saveSettings(): void {
 interface CalcRowView {
   id: string;
   side: CalcSide;
+  symbol: string;
+  symbolText: string;
   date: string;
   gramsText: string;
   priceText: string;
@@ -399,12 +523,32 @@ interface CalcStatsView {
   };
   quote: { symbol: string; label: string; buyText: string; sellText: string } | null;
   estimate: { valueText: string; pnlText: string; pnlPctText: string; tone: PriceTone } | null;
+  positions: Array<{
+    symbol: string;
+    label: string;
+    gramsText: string;
+    avgText: string;
+    sellText: string;
+    pnlText: string;
+    pnlPctText: string;
+    tone: PriceTone;
+  }>;
+  total: {
+    gramsText: string;
+    costText: string;
+    valueText: string;
+    pnlText: string;
+    pnlPctText: string;
+    tone: PriceTone;
+    complete: boolean;
+    invalidNote: string;
+  };
 }
 
-function loadCalcRecords(): CalcRecord[] {
+function loadCalcRecords(fallbackSymbol: string): CalcRecord[] {
   try {
     const raw = JSON.parse(readFileSync(calcFile, 'utf8'));
-    return normalizeCalcRecords(Array.isArray(raw) ? raw : raw?.records);
+    return normalizeCalcRecords(Array.isArray(raw) ? raw : raw?.records, fallbackSymbol);
   } catch {
     return [];
   }
@@ -432,6 +576,8 @@ function calcSymbols(): Array<{ symbol: string; label: string }> {
 }
 
 function buildCalcBase(): CalcBaseView {
+  const order = calcSymbols();
+  const labelOf = new Map(order.map((item) => [item.symbol, item.label]));
   const sorted = [...calcRecords].sort(
     (a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt || a.id.localeCompare(b.id),
   );
@@ -439,13 +585,15 @@ function buildCalcBase(): CalcBaseView {
     rows: sorted.map((record) => ({
       id: record.id,
       side: record.side,
+      symbol: record.symbol,
+      symbolText: labelOf.get(record.symbol) ?? record.symbol,
       date: record.date,
       gramsText: formatGrams(record.grams),
       priceText: formatPrice(record.price),
       amountText: `¥${formatPrice(calcAmount(record))}`,
     })),
-    symbols: calcSymbols(),
-    defaultSymbol: settings.primarySymbol,
+    symbols: order,
+    defaultSymbol: settings.calcSymbol || settings.primarySymbol,
     counts: {
       total: calcRecords.length,
       buys: calcRecords.filter((record) => record.side === 'buy').length,
@@ -467,6 +615,25 @@ function buildCalcStats(symbol: string, ids: string[]): CalcStatsView {
   const ledger = calcLedger(calcRecords);
   const estimate = calcEstimate(ledger, chosen?.sellPrice);
   const estimateText = calcEstimateText(estimate);
+  const prices: Record<string, number | undefined> = {};
+  for (const quote of quotes) prices[quote.symbol] = quote.sellPrice;
+  const summary = portfolioSummary(calcRecords, prices);
+  const orderIndex = new Map(quotes.map((quote, index) => [quote.symbol, index]));
+  const labelOf = new Map(quotes.map((quote) => [quote.symbol, quote.label]));
+  const positions = (summary?.positions ?? [])
+    .filter((position) => position.grams > 0)
+    .sort((a, b) => (orderIndex.get(a.symbol) ?? 99) - (orderIndex.get(b.symbol) ?? 99))
+    .map((position) => ({
+      symbol: position.symbol,
+      label: labelOf.get(position.symbol) ?? position.symbol,
+      gramsText: formatGrams(position.grams),
+      avgText: position.avgCost === null ? '—' : formatPrice(position.avgCost),
+      sellText: position.sellPrice === null ? '—' : formatPrice(position.sellPrice),
+      pnlText: position.pnl === null ? '—' : `${position.pnl >= 0 ? '+' : ''}${formatPrice(position.pnl)}`,
+      pnlPctText: position.pnlPct === null ? '' : formatPct(position.pnlPct),
+      tone: priceTone(position.pnl ?? undefined),
+    }));
+  const complete = summary?.complete === true;
   return {
     selected: {
       gramsText: formatGrams(selection.grams),
@@ -498,6 +665,20 @@ function buildCalcStats(symbol: string, ids: string[]): CalcStatsView {
           tone: estimate.tone,
         }
       : null,
+    positions,
+    total: {
+      gramsText: formatGrams(summary?.grams ?? 0),
+      costText: `¥${formatPrice(summary?.cost ?? 0)}`,
+      valueText: complete ? `¥${formatPrice(summary?.value ?? 0)}` : '—',
+      pnlText:
+        complete && summary
+          ? `${summary.pnl >= 0 ? '+' : ''}${formatPrice(summary.pnl)}`
+          : '—',
+      pnlPctText: complete && summary && summary.pnlPct !== null ? formatPct(summary.pnlPct) : '',
+      tone: priceTone(complete ? summary?.pnl : undefined),
+      complete,
+      invalidNote: summary?.invalidNote || ledger.invalidNote,
+    },
   };
 }
 
@@ -515,6 +696,38 @@ function barkConfig(): BarkConfig {
     deviceKey: settings.bark.deviceKey,
     group: 'GoldSentry',
     level: 'timeSensitive',
+  };
+}
+
+function mailEnabled(): boolean {
+  return settings.mail.enabled && !!settings.mail.host && !!settings.mail.to;
+}
+
+function mailConfig(): MailConfig {
+  return {
+    host: settings.mail.host,
+    port: settings.mail.port,
+    secure: settings.mail.secure,
+    user: settings.mail.user,
+    pass: settings.mail.pass,
+    from: settings.mail.from,
+    to: settings.mail.to,
+  };
+}
+
+function botEnabled(): boolean {
+  const bot = settings.bot;
+  if (!bot.enabled) return false;
+  return bot.type === 'telegram' ? !!bot.token && !!bot.chatId : !!bot.url;
+}
+
+function botConfig(): BotConfig {
+  return {
+    type: settings.bot.type,
+    url: settings.bot.url,
+    secret: settings.bot.secret,
+    token: settings.bot.token,
+    chatId: settings.bot.chatId,
   };
 }
 
@@ -668,6 +881,11 @@ function pushState(): void {
     display: settings.display,
     symbolOrder: settings.symbolOrder,
     bark: settings.bark,
+    webhook: settings.webhook,
+    mail: settings.mail,
+    bot: settings.bot,
+    digest: settings.digest,
+    quiet: settings.quiet,
     ball: settings.ball,
     taskbar: settings.taskbar,
   };
@@ -1080,15 +1298,72 @@ function notifyNative(alerts: FiredAlert[]): void {
   }
 }
 
-async function dispatch(alerts: FiredAlert[]): Promise<void> {
+function quietNow(now = Date.now()): boolean {
+  return inQuietHours(settings.quiet, now);
+}
+
+function recordPushErrors(errors: string[]): void {
+  if (!errors.length) return;
+  state = { ...state, errors: [...state.errors, ...errors] };
+  pushState();
+  console.log(`[push] ${errors.join('; ')}`);
+}
+
+/** 一条消息走所有已启用的通道；免打扰只在调用前判断 */
+async function pushMessage(title: string, body: string): Promise<void> {
+  const alerts: FiredAlert[] = [{ ruleId: 'message', symbol: '-', title, body }];
   notifyNative(alerts);
-  if (!settings.bark.enabled) return;
-  const errors = await sendAlertsToBark(barkConfig(), alerts);
-  if (errors.length) {
-    state = { ...state, errors: [...state.errors, ...errors] };
-    pushState();
-    console.log(`[bark] ${errors.join('; ')}`);
+  const errors: string[] = [];
+  if (settings.bark.enabled) errors.push(...(await sendAlertsToBark(barkConfig(), alerts)));
+  if (settings.webhook.enabled && settings.webhook.url) {
+    errors.push(...(await sendAlertsToWebhook({ url: settings.webhook.url }, alerts)));
   }
+  if (mailEnabled()) errors.push(...(await sendAlertsToMail(mailConfig(), alerts)));
+  if (botEnabled()) errors.push(...(await sendAlertsToBot(botConfig(), alerts)));
+  recordPushErrors(errors);
+}
+
+async function dispatch(alerts: FiredAlert[]): Promise<void> {
+  if (!alerts.length) return;
+  if (quietNow()) {
+    console.log('[quiet] 免打扰时段，本轮提醒不发送');
+    return;
+  }
+  notifyNative(alerts);
+  const errors: string[] = [];
+  if (settings.bark.enabled) errors.push(...(await sendAlertsToBark(barkConfig(), alerts)));
+  if (settings.webhook.enabled && settings.webhook.url) {
+    errors.push(...(await sendAlertsToWebhook({ url: settings.webhook.url }, alerts)));
+  }
+  if (mailEnabled()) errors.push(...(await sendAlertsToMail(mailConfig(), alerts)));
+  if (botEnabled()) errors.push(...(await sendAlertsToBot(botConfig(), alerts)));
+  recordPushErrors(errors);
+}
+
+let lastDigestCheckAt = 0;
+
+/** 每天到点推一次最近一个已结束交易日的简报，重启后不重复 */
+async function maybeSendDigest(): Promise<void> {
+  if (!settings.digest.enabled || !timeReached(settings.digest.time)) return;
+  const now = Date.now();
+  if (now - lastDigestCheckAt < 60_000) return;
+  lastDigestCheckAt = now;
+  if (!state.quotes.length) return;
+  const labels: Record<string, string> = {};
+  for (const quote of state.quotes) labels[quote.symbol] = quote.label;
+  // 选中的银行排第一；模拟持仓按每家银行各自的收盘卖出价逐行估值
+  const digest = store.digest(now, labels, {
+    primarySymbol: settings.primarySymbol,
+    calcRecords,
+  });
+  if (!digest || store.lastDigestDay() === digest.day) return;
+  // 先落盘再推送：推送失败也不每分钟重试，避免刷屏
+  store.setLastDigestDay(digest.day);
+  if (quietNow(now)) {
+    console.log('[quiet] 免打扰时段，日报跳过');
+    return;
+  }
+  await pushMessage(digest.title, digest.body);
 }
 
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1159,6 +1434,11 @@ async function poll(): Promise<void> {
       display: settings.display,
       symbolOrder: settings.symbolOrder,
       bark: settings.bark,
+      webhook: settings.webhook,
+      mail: settings.mail,
+      bot: settings.bot,
+      digest: settings.digest,
+      quiet: settings.quiet,
       ball: settings.ball,
       taskbar: settings.taskbar,
       health: result.health,
@@ -1168,7 +1448,13 @@ async function poll(): Promise<void> {
     updateTrayTitle();
     layoutTaskbar();
     pushState();
+    if (rules.some((rule) => rule.symbol === PORTFOLIO_SYMBOL && rule.enabled)) {
+      const prices = Object.fromEntries(result.quotes.map((quote) => [quote.symbol, quote.sellPrice]));
+      const summary = portfolioSummary(calcRecords, prices);
+      result.alerts.push(...evaluatePortfolioRules(rules, summary, store));
+    }
     if (result.alerts.length) await dispatch(result.alerts);
+    await maybeSendDigest();
   } finally {
     polling = false;
     scheduleNext();
@@ -1330,8 +1616,17 @@ if (!app.requestSingleInstanceLock()) {
     taskbarLogFile = join(app.getPath('userData'), 'taskbar.log');
     rules = loadRules();
     settings = loadSettings();
-    calcRecords = loadCalcRecords();
+    calcRecords = loadCalcRecords(settings.calcSymbol || settings.primarySymbol);
+    // 已下线银行（如建行）的记录迁到当前主显；旧记录没有银行字段时也在这里补齐
+    const fallbackSymbol = settings.calcSymbol || settings.primarySymbol;
+    calcRecords = calcRecords.map((record) =>
+      RETIRED_SYMBOLS.has(record.symbol) || !record.symbol ? { ...record, symbol: fallbackSymbol } : record,
+    );
+    saveCalcRecords();
     store = new QuoteStore(storeFile);
+    // 已下线品种（如建行）的历史采样直接清掉，别继续撑大文件
+    store.retainSymbols(JD_SYMBOLS);
+    app.once('will-quit', () => store.flush());
 
     // template 图是纯黑剪影，只适配 macOS 菜单栏；Windows 任务栏是浅色底，要用彩色图标
     trayLogo =
@@ -1379,6 +1674,7 @@ if (!app.requestSingleInstanceLock()) {
     if (settings.ball.enabled) setBallVisible(true);
     if (settings.taskbar.enabled) setTaskbarVisible(true);
     if (process.env.GOLDSENTRY_TEST_NOTIFY === '1') sendTestNotification();
+    if (process.env.GOLDSENTRY_OPEN_PANEL === '1') showPanel('settings');
   });
 }
 
@@ -1399,6 +1695,11 @@ ipcMain.handle('gold:set-primary', (_event, symbol: string) => {
   applyPrimarySymbol(symbol);
   return state;
 });
+ipcMain.handle('gold:set-calc-symbol', (_event, symbol: unknown) => {
+  settings.calcSymbol = typeof symbol === 'string' ? symbol : '';
+  saveSettings();
+  return { ok: true };
+});
 ipcMain.handle('gold:set-interval', (_event, seconds: number) => {
   if (!ALLOWED_INTERVALS.includes(Number(seconds))) return { ok: false, error: '非法间隔' };
   settings.pollSeconds = Number(seconds);
@@ -1417,6 +1718,61 @@ ipcMain.handle('gold:bark-test', () => sendBark(barkConfig(), {
   title: 'GoldSentry 推送通道测试',
   body: '收到说明 Bark 已打通',
 }));
+ipcMain.handle('gold:save-webhook', (_event, config: Settings['webhook']) => {
+  settings.webhook = { enabled: !!config?.enabled, url: String(config?.url ?? '').trim() };
+  saveSettings();
+  pushState();
+  return state;
+});
+ipcMain.handle('gold:webhook-test', (_event, url: unknown) =>
+  sendWebhook(
+    { url: String(url ?? settings.webhook.url).trim() },
+    { title: 'GoldSentry 推送通道测试', body: '收到说明 Webhook 已打通' },
+  ),
+);
+ipcMain.handle('gold:save-mail', (_event, config: Settings['mail']) => {
+  settings.mail = normalizeMail(config, settings.mail);
+  saveSettings();
+  pushState();
+  return state;
+});
+ipcMain.handle('gold:mail-test', (_event, config: Settings['mail']) =>
+  sendMail(normalizeMail(config, settings.mail), {
+    subject: 'GoldSentry 推送通道测试',
+    text: '收到说明邮件通道已打通',
+  }),
+);
+ipcMain.handle('gold:save-bot', (_event, config: Settings['bot']) => {
+  settings.bot = normalizeBot(config, settings.bot);
+  saveSettings();
+  pushState();
+  return state;
+});
+ipcMain.handle('gold:bot-test', (_event, config: Settings['bot']) =>
+  sendBot(normalizeBot(config, settings.bot), {
+    title: 'GoldSentry 推送通道测试',
+    body: '收到说明机器人通道已打通',
+  }),
+);
+ipcMain.handle('gold:save-digest', (_event, config: Settings['digest']) => {
+  settings.digest = {
+    enabled: !!config?.enabled,
+    time: parseHhmm(config?.time) === null ? DEFAULT_SETTINGS.digest.time : String(config.time),
+  };
+  saveSettings();
+  pushState();
+  return state;
+});
+ipcMain.handle('gold:save-quiet', (_event, config: Settings['quiet']) => {
+  settings.quiet = {
+    enabled: !!config?.enabled,
+    start: parseHhmm(config?.start) === null ? DEFAULT_SETTINGS.quiet.start : String(config.start),
+    end: parseHhmm(config?.end) === null ? DEFAULT_SETTINGS.quiet.end : String(config.end),
+  };
+  saveSettings();
+  pushState();
+  return state;
+});
 ipcMain.handle('gold:capabilities', () => ({
   ball: supportsBall(),
   taskbar: supportsTaskbar(),
@@ -1486,24 +1842,27 @@ ipcMain.handle('calc:summary', (_event, args: { symbol?: string; ids?: unknown }
 }));
 ipcMain.handle(
   'calc:add',
-  (_event, args: { side?: unknown; date?: unknown; grams?: unknown; price?: unknown; symbol?: string; ids?: unknown }) => {
+  (_event, args: { side?: unknown; date?: unknown; grams?: unknown; price?: unknown; symbol?: unknown; ids?: unknown }) => {
     const side: CalcSide | null = args?.side === 'buy' ? 'buy' : args?.side === 'sell' ? 'sell' : null;
+    const symbol = typeof args?.symbol === 'string' ? args.symbol.trim() : '';
     const date = typeof args?.date === 'string' ? args.date : '';
     const grams = Number(args?.grams);
     const price = Number(args?.price);
     if (!side) return { ok: false, error: '请选择买入或卖出' };
+    if (!symbol) return { ok: false, error: '请选择银行' };
     if (!isCalcDate(date)) return { ok: false, error: '日期不合法' };
     if (!Number.isFinite(grams) || grams <= 0) return { ok: false, error: '克数要大于 0' };
     if (!Number.isFinite(price) || price <= 0) return { ok: false, error: '单价要大于 0' };
     if (side === 'sell') {
-      const ledger = calcLedger(calcRecords);
+      const ledger = calcLedger(calcRecords.filter((record) => record.symbol === symbol));
       if (grams > ledger.grams + 1e-6) {
-        return { ok: false, error: `卖出克数超过当前持仓 ${formatGrams(ledger.grams)}` };
+        return { ok: false, error: `卖出克数超过该银行当前持仓 ${formatGrams(ledger.grams)}` };
       }
     }
     const record: CalcRecord = {
       id: randomUUID(),
       side,
+      symbol,
       date,
       grams: Math.round(grams * 1000) / 1000,
       price: Math.round(price * 100) / 100,
@@ -1511,7 +1870,7 @@ ipcMain.handle(
     };
     calcRecords.push(record);
     saveCalcRecords();
-    return { ...calcView(args?.symbol, args?.ids), addedId: record.id };
+    return { ...calcView(symbol, args?.ids), addedId: record.id };
   },
 );
 ipcMain.handle('calc:remove', (_event, args: { ids?: unknown; symbol?: string }) => {

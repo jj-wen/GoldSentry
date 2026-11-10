@@ -24,6 +24,9 @@ const SKU_ORDER = [
 
 export const JD_PRODUCT_SKUS = SKU_ORDER;
 
+/** 当前监测的品种代号，供外壳清理已下线品种的历史采样 */
+export const JD_SYMBOLS = SKU_ORDER.map((sku) => PRODUCTS[sku].symbol);
+
 interface BatchRow {
   productSku: string;
   buyPrice?: string;

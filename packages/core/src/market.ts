@@ -1,3 +1,5 @@
+import { beijingMinutes } from './clock.ts';
+
 /**
  * 积存金交易时段（北京时间）。银行积存金是连续盘：日盘 9:00–15:30 直接接夜盘到次日凌晨，
  * 各家收盘点不同（实测 2026-11-07 收盘时间戳：工商 22:30、广发/兴业/中信/民生 02:00、浙商 02:30），
@@ -37,17 +39,19 @@ const NIGHT_END = 2 * 60 + 30;
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const BEIJING_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+  weekday: 'short',
+});
+
 function beijingParts(now: number): { dateKey: string; weekday: number; minutes: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-    weekday: 'short',
-  }).formatToParts(new Date(now));
+  const parts = BEIJING_PARTS.formatToParts(new Date(now));
   const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
   return {
     dateKey: `${get('year')}-${get('month')}-${get('day')}`,
@@ -89,7 +93,7 @@ export interface TradingHoursInfo {
   openText: string;
   /** 收盘时刻文案，用于「已收盘（22:30）」 */
   closeText: string;
-  /** 与积存金并集时段无关的品种（建行账户金） */
+  /** 与积存金并集时段无关的品种 */
   continuous?: boolean;
   /** 规则说明，直接给详情面板/VS Code hover */
   note: string;
@@ -103,7 +107,7 @@ function isTradingDay(dateKey: string, weekday: number): boolean {
 /**
  * 各家时段来自京东产品页的 goldPriceQuoteTimePeriodList + 本地 quotes.json 实测收盘点：
  * 工商 09:10–22:30；浙商 周一 09:00–周六 02:30；民生 09:10–次日 02:00；
- * 广发/兴业/中信 09:00–次日 02:00；建行积存 周一 09:10–周六 02:30。
+ * 广发/兴业/中信 09:00–次日 02:00。
  * 京东对浙商写 00:00–23:59、对广发写 15:30–20:00 停盘，但实测报价分别到 02:30、且午后连续，
  * 以实测为准；周末和法定节假日统一休市。
  */
@@ -156,36 +160,19 @@ const TRADING_HOURS: Record<string, TradingHoursInfo> = {
     closeText: '次日 02:00',
     note: '中信积存金 09:00 开市、次日 02:00 收盘；周末与法定节假日休市，节前最后交易日晚上停夜盘',
   },
-  JJC: {
-    text: '周一 09:10–周六 02:30',
-    openMinutes: 9 * 60 + 10,
-    closeMinutes: 2 * 60 + 30,
-    openText: '09:10',
-    closeText: '次日 02:30',
-    note: '建行黄金积存周一 09:10 至周六 02:30；主动积存价每日 10:30 定价，赎回价盘中更新',
-  },
-  AU9999: {
-    text: '连续盘（以建行 App 为准）',
-    openMinutes: 0,
-    closeMinutes: 24 * 60,
-    openText: '以建行 App 为准',
-    closeText: '以建行 App 为准',
-    continuous: true,
-    note: '建行账户金不受积存金并集时段约束，具体交易时间以建行 App 为准',
-  },
-  AU9995: {
-    text: '连续盘（以建行 App 为准）',
-    openMinutes: 0,
-    closeMinutes: 24 * 60,
-    openText: '以建行 App 为准',
-    closeText: '以建行 App 为准',
-    continuous: true,
-    note: '建行账户金不受积存金并集时段约束，具体交易时间以建行 App 为准',
-  },
 };
 
 export function tradingHoursOf(symbol: string): TradingHoursInfo | undefined {
   return TRADING_HOURS[symbol];
+}
+
+/** 交易日的键：凌晨 02:30 前的夜盘属于前一个交易日，日报按这个口径分组 */
+export function tradingDayKey(ts: number): string {
+  // 用固定 UTC+8 算术；日报会遍历全部采样，别在循环里走 Intl.formatToParts
+  const beijing = ts + 8 * 3_600_000;
+  return new Date(beijingMinutes(ts) < NIGHT_END ? beijing - 86_400_000 : beijing)
+    .toISOString()
+    .slice(0, 10);
 }
 
 export interface BankSession {

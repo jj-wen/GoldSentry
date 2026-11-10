@@ -68,3 +68,54 @@ export async function sendAlertsToBark(config: BarkConfig, alerts: FiredAlert[])
   }
   return errors;
 }
+
+export interface WebhookConfig {
+  url: string;
+}
+
+export interface WebhookResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+/**
+ * 通用 Webhook：POST JSON { title, body, source, ts }。
+ * URL 里可能带第三方 token（飞书/钉钉），错误信息不能回显 URL。
+ */
+export async function sendWebhook(
+  config: WebhookConfig,
+  payload: { title: string; body: string },
+  timeoutMs = 8000,
+): Promise<WebhookResult> {
+  if (!/^https?:\/\//.test(config.url)) {
+    return { ok: false, status: 0, error: 'Webhook 地址必须以 http(s):// 开头' };
+  }
+  let res: Response;
+  try {
+    res = await globalThis.fetch(config.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: payload.title,
+        body: payload.body,
+        source: 'GoldSentry',
+        ts: Date.now(),
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    return { ok: false, status: 0, error: `Webhook 请求失败: ${(err as Error).name}` };
+  }
+  if (res.ok) return { ok: true, status: res.status };
+  return { ok: false, status: res.status, error: `Webhook http ${res.status}` };
+}
+
+export async function sendAlertsToWebhook(config: WebhookConfig, alerts: FiredAlert[]): Promise<string[]> {
+  const errors: string[] = [];
+  for (const alert of alerts) {
+    const result = await sendWebhook(config, { title: alert.title, body: alert.body });
+    if (!result.ok && result.error) errors.push(result.error);
+  }
+  return errors;
+}

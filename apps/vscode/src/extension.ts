@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { QuoteStore, backoffSeconds, bankSessionAt, feeCell, formatPct, formatPrice, pollOnce, priceTone, sendAlertsToBark, showArrow, sources, tradingHoursOf, type AlertRule, type DisplayToggles, type Quote } from '@goldsentry/core';
+import { QuoteStore, backoffSeconds, bankSessionAt, BOT_TYPE_ORDER, BOT_TYPE_TEXT, feeCell, formatPct, formatPrice, inQuietHours, JD_SYMBOLS, normalizeBotType, parseHhmm, pollOnce, priceTone, sendAlertsToBark, sendAlertsToBot, sendAlertsToMail, sendAlertsToWebhook, showArrow, sources, timeReached, tradingHoursOf, type AlertRule, type BotConfig, type DisplayToggles, type MailConfig, type Quote } from '@goldsentry/core';
 
 const COOLDOWN_MINUTES = 30;
 
@@ -30,6 +30,55 @@ function displaySetting(): DisplayToggles {
     down: config.get<boolean>('showDown', true),
     pct: config.get<boolean>('showPct', false),
   };
+}
+
+/** 邮件配置三项齐了才发，缺一项就当没启用，避免每次都报同一串错误 */
+function mailConfig(): MailConfig | null {
+  const config = vscode.workspace.getConfiguration('goldsentry');
+  if (!config.get<boolean>('emailEnabled', false)) return null;
+  const host = config.get<string>('emailHost', '').trim();
+  const to = config.get<string>('emailTo', '').trim();
+  if (!host || !to) return null;
+  return {
+    host,
+    port: config.get<number>('emailPort', 465),
+    secure: config.get<boolean>('emailSecure', true),
+    user: config.get<string>('emailUser', '').trim(),
+    pass: config.get<string>('emailPass', ''),
+    from: config.get<string>('emailFrom', '').trim(),
+    to,
+  };
+}
+
+async function sendMailAlerts(alerts: { title: string; body: string }[]): Promise<void> {
+  const mail = mailConfig();
+  if (!mail || !alerts.length) return;
+  const errors = await sendAlertsToMail(mail, alerts.map((alert, index) => ({ ruleId: `mail-${index}`, symbol: '-', ...alert })));
+  for (const error of errors) void vscode.window.showWarningMessage(`GoldSentry 邮件：${error}`);
+}
+
+function botConfig(): BotConfig | null {
+  const config = vscode.workspace.getConfiguration('goldsentry');
+  if (!config.get<boolean>('botEnabled', false)) return null;
+  const type = normalizeBotType(config.get<string>('botType', 'feishu'));
+  const url = config.get<string>('botUrl', '').trim();
+  const token = config.get<string>('botToken', '').trim();
+  const chatId = config.get<string>('botChatId', '').trim();
+  if (type === 'telegram' ? !token || !chatId : !url) return null;
+  return {
+    type,
+    url,
+    secret: config.get<string>('botSecret', ''),
+    token,
+    chatId,
+  };
+}
+
+async function sendBotAlerts(alerts: { title: string; body: string }[]): Promise<void> {
+  const bot = botConfig();
+  if (!bot || !alerts.length) return;
+  const errors = await sendAlertsToBot(bot, alerts.map((alert, index) => ({ ruleId: `bot-${index}`, symbol: '-', ...alert })));
+  for (const error of errors) void vscode.window.showWarningMessage(`GoldSentry 机器人：${error}`);
 }
 
 function renderStatus(picked: Quote | undefined, errors: string[]): void {
@@ -65,25 +114,97 @@ async function refresh(memento: vscode.Memento): Promise<void> {
 
   renderStatus(quotes.find((q) => q.symbol === symbolSetting()) ?? quotes[0], result.errors);
 
-  for (const alert of result.alerts) {
-    void vscode.window.showInformationMessage(`${alert.title}｜${alert.body}`, '查看行情').then((pick) => {
-      if (pick) void vscode.commands.executeCommand('goldsentry.refresh');
-    });
+  const config = vscode.workspace.getConfiguration('goldsentry');
+  const quiet = inQuietHours({
+    enabled: config.get<boolean>('quietEnabled', false),
+    start: config.get<string>('quietStart', '23:00'),
+    end: config.get<string>('quietEnd', '08:00'),
+  });
+  if (!quiet) {
+    for (const alert of result.alerts) {
+      void vscode.window.showInformationMessage(`${alert.title}｜${alert.body}`, '查看行情').then((pick) => {
+        if (pick) void vscode.commands.executeCommand('goldsentry.refresh');
+      });
+    }
+
+    const barkKey = config.get<string>('barkKey', '');
+    if (barkKey && result.alerts.length) {
+      const errors = await sendAlertsToBark(
+        {
+          server: config.get<string>('barkServer', 'https://api.day.app'),
+          deviceKey: barkKey,
+          group: 'GoldSentry',
+          level: 'timeSensitive',
+        },
+        result.alerts,
+      );
+      for (const error of errors) void vscode.window.showWarningMessage(`GoldSentry Bark：${error}`);
+    }
+
+    const webhookUrl = config.get<string>('webhookUrl', '').trim();
+    if (webhookUrl && result.alerts.length) {
+      const errors = await sendAlertsToWebhook({ url: webhookUrl }, result.alerts);
+      for (const error of errors) void vscode.window.showWarningMessage(`GoldSentry Webhook：${error}`);
+    }
+
+    await sendMailAlerts(result.alerts);
+    await sendBotAlerts(result.alerts);
   }
 
-  const barkKey = vscode.workspace.getConfiguration('goldsentry').get<string>('barkKey', '');
-  if (barkKey && result.alerts.length) {
+  await maybeSendDigest();
+}
+
+let lastDigestCheckAt = 0;
+
+/** 每天到点推一次最近一个已结束交易日的简报；首次启用只记基线 */
+async function maybeSendDigest(): Promise<void> {
+  const config = vscode.workspace.getConfiguration('goldsentry');
+  if (!config.get<boolean>('digestEnabled', true)) return;
+  if (!timeReached(config.get<string>('digestTime', '08:30'))) return;
+  const now = Date.now();
+  if (now - lastDigestCheckAt < 60_000) return;
+  lastDigestCheckAt = now;
+  if (!quotes.length) return;
+
+  const labels: Record<string, string> = {};
+  for (const quote of quotes) labels[quote.symbol] = quote.label;
+  // 选中的品种排第一，和面板行为一致
+  const digest = store.digest(now, labels, { primarySymbol: symbolSetting() });
+  if (!digest || store.lastDigestDay() === digest.day) return;
+  store.setLastDigestDay(digest.day);
+
+  const quiet = inQuietHours(
+    {
+      enabled: config.get<boolean>('quietEnabled', false),
+      start: config.get<string>('quietStart', '23:00'),
+      end: config.get<string>('quietEnd', '08:00'),
+    },
+    now,
+  );
+  if (quiet) return;
+
+  void vscode.window.showInformationMessage(`${digest.title}｜${digest.body}`);
+  const alert = [{ ruleId: 'digest', symbol: '-', title: digest.title, body: digest.body }];
+  const barkKey = config.get<string>('barkKey', '');
+  if (barkKey) {
     const errors = await sendAlertsToBark(
       {
-        server: vscode.workspace.getConfiguration('goldsentry').get<string>('barkServer', 'https://api.day.app'),
+        server: config.get<string>('barkServer', 'https://api.day.app'),
         deviceKey: barkKey,
         group: 'GoldSentry',
-        level: 'timeSensitive',
+        level: 'passive',
       },
-      result.alerts,
+      alert,
     );
     for (const error of errors) void vscode.window.showWarningMessage(`GoldSentry Bark：${error}`);
   }
+  const webhookUrl = config.get<string>('webhookUrl', '').trim();
+  if (webhookUrl) {
+    const errors = await sendAlertsToWebhook({ url: webhookUrl }, alert);
+    for (const error of errors) void vscode.window.showWarningMessage(`GoldSentry Webhook：${error}`);
+  }
+  await sendMailAlerts(alert);
+  await sendBotAlerts(alert);
 }
 
 function buildTooltip(errors: string[]): vscode.MarkdownString {
@@ -109,7 +230,7 @@ function buildTooltip(errors: string[]): vscode.MarkdownString {
     '_交易规则：交易日一般 09:00 开市；工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00。周末与法定节假日休市，节前最后一个交易日晚上停夜盘。_\n',
   );
   md.appendMarkdown('_费用为人工核实的公开费率，非实时；点差 0 多为上游只给单边价；带 ⚠ 表示核实已超过 90 天，请以银行 App 为准_\n');
-  md.appendMarkdown('_涨跌幅口径以各行 App 为准，不同银行“昨收”定义不同，勿横向比较；建行日价为 10:30 定价 + 盘中赎回价_\n');
+  md.appendMarkdown('_涨跌幅口径以各行 App 为准，不同银行“昨收”定义不同，勿横向比较_\n');
   const base = Math.max(1, vscode.workspace.getConfiguration('goldsentry').get<number>('intervalSeconds', 10));
   const effective = backoffSeconds(base, failureStreak);
   if (effective > base) {
@@ -212,6 +333,34 @@ async function openSettings(memento: vscode.Memento): Promise<void> {
     { label: '主显品种', detail: symbolSetting(), key: 'symbol' },
     { label: '到价提醒', detail: `${rulesFromMemento(memento).length} 条`, key: 'alert' },
     { label: 'Bark device key', detail: config.get<string>('barkKey', '') ? '已配置' : '未配置', key: 'bark' },
+    {
+      label: '免打扰时段',
+      detail: config.get<boolean>('quietEnabled', false)
+        ? `${config.get<string>('quietStart', '23:00')}–${config.get<string>('quietEnd', '08:00')}`
+        : '关',
+      key: 'quiet',
+    },
+    {
+      label: '每日简报',
+      detail: config.get<boolean>('digestEnabled', true) ? config.get<string>('digestTime', '08:30') : '关',
+      key: 'digest',
+    },
+    { label: 'Webhook 推送', detail: config.get<string>('webhookUrl', '') ? '已配置' : '未配置', key: 'webhook' },
+    {
+      label: '邮件推送',
+      detail:
+        config.get<boolean>('emailEnabled', false) && config.get<string>('emailHost', '')
+          ? config.get<string>('emailHost', '')
+          : '未配置',
+      key: 'email',
+    },
+    {
+      label: '机器人推送',
+      detail: config.get<boolean>('botEnabled', false)
+        ? BOT_TYPE_TEXT[normalizeBotType(config.get<string>('botType', 'feishu'))]
+        : '未配置',
+      key: 'bot',
+    },
     { label: paused ? '继续轮询' : '暂停轮询', detail: paused ? '已暂停' : '进行中', key: 'pause' },
   ] as const;
 
@@ -262,6 +411,165 @@ async function openSettings(memento: vscode.Memento): Promise<void> {
       if (key !== undefined) await config.update('barkKey', key.trim(), vscode.ConfigurationTarget.Global);
       break;
     }
+    case 'quiet': {
+      const start = await vscode.window.showInputBox({
+        prompt: '免打扰开始（HH:MM，留空关闭）',
+        value: config.get<string>('quietStart', '23:00'),
+        validateInput: (v) => (!v.trim() || parseHhmm(v) !== null ? null : '格式应为 HH:MM'),
+      });
+      if (start === undefined) break;
+      if (!start.trim()) {
+        await config.update('quietEnabled', false, vscode.ConfigurationTarget.Global);
+        break;
+      }
+      const end = await vscode.window.showInputBox({
+        prompt: '免打扰结束（HH:MM）',
+        value: config.get<string>('quietEnd', '08:00'),
+        validateInput: (v) => (parseHhmm(v) !== null ? null : '格式应为 HH:MM'),
+      });
+      if (end === undefined || parseHhmm(end) === null) break;
+      await config.update('quietStart', start.trim(), vscode.ConfigurationTarget.Global);
+      await config.update('quietEnd', end.trim(), vscode.ConfigurationTarget.Global);
+      await config.update('quietEnabled', true, vscode.ConfigurationTarget.Global);
+      break;
+    }
+    case 'digest': {
+      const time = await vscode.window.showInputBox({
+        prompt: '每日简报时间（HH:MM，留空关闭）',
+        value: config.get<string>('digestTime', '08:30'),
+        validateInput: (v) => (!v.trim() || parseHhmm(v) !== null ? null : '格式应为 HH:MM'),
+      });
+      if (time === undefined) break;
+      if (!time.trim()) {
+        await config.update('digestEnabled', false, vscode.ConfigurationTarget.Global);
+        break;
+      }
+      await config.update('digestTime', time.trim(), vscode.ConfigurationTarget.Global);
+      await config.update('digestEnabled', true, vscode.ConfigurationTarget.Global);
+      break;
+    }
+    case 'webhook': {
+      const url = await vscode.window.showInputBox({
+        prompt: 'Webhook 地址（留空关闭），POST JSON：title/body/source/ts',
+        value: config.get<string>('webhookUrl', ''),
+        ignoreFocusOut: true,
+        validateInput: (v) => (!v.trim() || /^https?:\/\//.test(v.trim()) ? null : '必须以 http(s):// 开头'),
+      });
+      if (url !== undefined) await config.update('webhookUrl', url.trim(), vscode.ConfigurationTarget.Global);
+      break;
+    }
+    case 'email': {
+      const host = await vscode.window.showInputBox({
+        prompt: 'SMTP 服务器（留空关闭邮件推送），如 smtp.qq.com',
+        value: config.get<string>('emailHost', ''),
+        validateInput: (v) => (!v.trim() || /^[^\s/:]+$/.test(v.trim()) ? null : '只填主机名，不要带协议或斜杠'),
+      });
+      if (host === undefined) break;
+      if (!host.trim()) {
+        await config.update('emailEnabled', false, vscode.ConfigurationTarget.Global);
+        break;
+      }
+      const port = await vscode.window.showInputBox({
+        prompt: 'SMTP 端口（465/587）',
+        value: String(config.get<number>('emailPort', 465)),
+        validateInput: (v) => (/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= 65535 ? null : '端口应为 1–65535'),
+      });
+      if (port === undefined) break;
+      const ssl = await vscode.window.showQuickPick(
+        [
+          { label: 'SSL（465）', value: true },
+          { label: 'STARTTLS / 明文（587/25）', value: false },
+        ],
+        { placeHolder: '连接方式' },
+      );
+      if (!ssl) break;
+      const user = await vscode.window.showInputBox({
+        prompt: 'SMTP 账号邮箱（留空表示不认证）',
+        value: config.get<string>('emailUser', ''),
+        ignoreFocusOut: true,
+      });
+      if (user === undefined) break;
+      const pass = await vscode.window.showInputBox({
+        prompt: 'SMTP 密码或授权码（存在 VS Code 设置里）',
+        password: true,
+        ignoreFocusOut: true,
+        value: config.get<string>('emailPass', ''),
+      });
+      if (pass === undefined) break;
+      const from = await vscode.window.showInputBox({
+        prompt: '发件人邮箱（留空同账号）',
+        value: config.get<string>('emailFrom', '') || user.trim(),
+      });
+      if (from === undefined) break;
+      const to = await vscode.window.showInputBox({
+        prompt: '收件人邮箱，多个用逗号分隔',
+        value: config.get<string>('emailTo', ''),
+        ignoreFocusOut: true,
+        validateInput: (v) => (v.trim() ? null : '至少一个收件人'),
+      });
+      if (to === undefined || !to.trim()) break;
+      await config.update('emailHost', host.trim(), vscode.ConfigurationTarget.Global);
+      await config.update('emailPort', Number(port), vscode.ConfigurationTarget.Global);
+      await config.update('emailSecure', ssl.value, vscode.ConfigurationTarget.Global);
+      await config.update('emailUser', user.trim(), vscode.ConfigurationTarget.Global);
+      await config.update('emailPass', pass, vscode.ConfigurationTarget.Global);
+      await config.update('emailFrom', from.trim(), vscode.ConfigurationTarget.Global);
+      await config.update('emailTo', to.trim(), vscode.ConfigurationTarget.Global);
+      await config.update('emailEnabled', true, vscode.ConfigurationTarget.Global);
+      void vscode.window.setStatusBarMessage('GoldSentry：邮件推送已保存', 4000);
+      break;
+    }
+    case 'bot': {
+      const picked = await vscode.window.showQuickPick(
+        BOT_TYPE_ORDER.map((type) => ({ label: BOT_TYPE_TEXT[type], type })),
+        { placeHolder: '机器人平台（Esc 取消，清空地址可关闭）' },
+      );
+      if (!picked) break;
+      if (picked.type === 'telegram') {
+        const token = await vscode.window.showInputBox({
+          prompt: 'Telegram bot token',
+          password: true,
+          ignoreFocusOut: true,
+          value: config.get<string>('botToken', ''),
+        });
+        if (token === undefined) break;
+        const chatId = await vscode.window.showInputBox({
+          prompt: 'Telegram chat id',
+          value: config.get<string>('botChatId', ''),
+          validateInput: (v) => (v.trim() ? null : 'chat id 不能为空'),
+        });
+        if (chatId === undefined || !chatId.trim()) break;
+        await config.update('botToken', token.trim(), vscode.ConfigurationTarget.Global);
+        await config.update('botChatId', chatId.trim(), vscode.ConfigurationTarget.Global);
+      } else {
+        const url = await vscode.window.showInputBox({
+          prompt: `${BOT_TYPE_TEXT[picked.type]}机器人 Webhook（留空关闭）`,
+          value: config.get<string>('botUrl', ''),
+          ignoreFocusOut: true,
+          validateInput: (v) => (!v.trim() || /^https?:\/\//.test(v.trim()) ? null : '必须以 http(s):// 开头'),
+        });
+        if (url === undefined) break;
+        if (!url.trim()) {
+          await config.update('botEnabled', false, vscode.ConfigurationTarget.Global);
+          break;
+        }
+        await config.update('botUrl', url.trim(), vscode.ConfigurationTarget.Global);
+        if (picked.type === 'dingtalk') {
+          const secret = await vscode.window.showInputBox({
+            prompt: '钉钉加签密钥（没开加签就留空）',
+            password: true,
+            ignoreFocusOut: true,
+            value: config.get<string>('botSecret', ''),
+          });
+          if (secret === undefined) break;
+          await config.update('botSecret', secret.trim(), vscode.ConfigurationTarget.Global);
+        }
+      }
+      await config.update('botType', picked.type, vscode.ConfigurationTarget.Global);
+      await config.update('botEnabled', true, vscode.ConfigurationTarget.Global);
+      void vscode.window.setStatusBarMessage(`GoldSentry：${BOT_TYPE_TEXT[picked.type]}推送已保存`, 4000);
+      break;
+    }
     case 'pause':
       await vscode.commands.executeCommand('goldsentry.pause');
       break;
@@ -270,6 +578,7 @@ async function openSettings(memento: vscode.Memento): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): void {
   store = new QuoteStore(vscode.Uri.joinPath(context.globalStorageUri, 'quotes.json').fsPath);
+  store.retainSymbols(JD_SYMBOLS);
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusItem.command = 'goldsentry.show';
   gearItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
@@ -302,4 +611,5 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   if (timer) clearTimeout(timer);
+  store?.flush();
 }

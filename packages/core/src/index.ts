@@ -1,8 +1,9 @@
 export type { Quote, QuoteSource, PriceBasis } from './types.ts';
-export { ccbSource, parseAccountGoldXml } from './sources/ccb.ts';
-export { jdSource, parseBatchPrice, JD_PRODUCT_SKUS } from './sources/jd.ts';
+export { jdSource, parseBatchPrice, JD_PRODUCT_SKUS, JD_SYMBOLS } from './sources/jd.ts';
 export { QuoteStore, beijingDateKey } from './store.ts';
-export { beijingDayStart, beijingHhmm } from './clock.ts';
+export { beijingDayStart, beijingHhmm, beijingMinutes } from './clock.ts';
+export { buildDailyDigest, type DailyDigest, type DigestOptions } from './digest.ts';
+export { inQuietHours, parseHhmm, timeReached, type QuietHours } from './schedule.ts';
 export {
   dayTrendSeries,
   DEFAULT_TREND_SETTINGS,
@@ -24,9 +25,13 @@ export {
 } from './trend.ts';
 export {
   compileRules,
+  evaluatePortfolioRules,
   evaluateRules,
+  isPortfolioKind,
+  PORTFOLIO_SYMBOL,
   ruleIdOf,
   ruleKindOf,
+  ruleValueOf,
   RULE_COOLDOWN_MINUTES,
   RULE_KIND_ORDER,
   RULE_KIND_TEXT,
@@ -41,6 +46,7 @@ export { assessHealth, type HealthReport, type HealthStatus } from './health.ts'
 export {
   bankSessionAt,
   marketSessionAt,
+  tradingDayKey,
   tradingHoursOf,
   MARKET_SCHEDULE_AS_OF,
   type BankSession,
@@ -49,7 +55,18 @@ export {
 } from './market.ts';
 export { feeAgeDays, feeCell, feeOf, feeShortText, FEE_STALE_DAYS, PRODUCT_FEES, type FeeCell, type FeeInfo } from './fees.ts';
 export { backoffSeconds, BACKOFF_AFTER_FAILURES, BACKOFF_MAX_SECONDS } from './backoff.ts';
-export { sendBark, sendAlertsToBark, type BarkConfig, type BarkResult } from './notify.ts';
+export { sendBark, sendAlertsToBark, sendWebhook, sendAlertsToWebhook, type BarkConfig, type BarkResult, type WebhookConfig, type WebhookResult } from './notify.ts';
+export { sendMail, sendAlertsToMail, type MailConfig, type MailResult } from './mail.ts';
+export {
+  BOT_TYPE_ORDER,
+  BOT_TYPE_TEXT,
+  normalizeBotType,
+  sendAlertsToBot,
+  sendBot,
+  type BotConfig,
+  type BotResult,
+  type BotType,
+} from './bot.ts';
 export {
   applySymbolOrder,
   arrowModeOf,
@@ -97,19 +114,25 @@ export {
   calcEstimate,
   calcEstimateText,
   calcLedger,
+  calcLedgersBySymbol,
   calcSelection,
+  dailyPortfolio,
   formatGrams,
   isCalcDate,
   normalizeCalcRecords,
+  portfolioSummary,
   type CalcEstimate,
   type CalcLedger,
   type CalcRecord,
   type CalcSelection,
   type CalcSide,
+  type DailyPortfolio,
+  type PortfolioPosition,
+  type PortfolioSummary,
+  type SymbolLedger,
 } from './calculator.ts';
 
 import type { QuoteSource } from './types.ts';
-import { ccbSource } from './sources/ccb.ts';
 import { jdSource } from './sources/jd.ts';
 
-export const sources: QuoteSource[] = [jdSource, ccbSource];
+export const sources: QuoteSource[] = [jdSource];

@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { BACKOFF_AFTER_FAILURES, BACKOFF_MAX_SECONDS, backoffSeconds, QuoteStore, pollOnce as rawPollOnce, type Quote, type QuoteSource } from '../packages/core/src/index.ts';
 
 /** 固定成周五 10:00 北京时间：否则周末/节假日跑测试会把"陈旧"断言误判成正常 */
@@ -121,10 +121,12 @@ rmSync(s7Path, { force: true });
 const s7 = new QuoteStore(s7Path);
 await pollOnce([throwing], s7, []);
 await pollOnce([throwing], s7, []);
+// 采样/失效次数按分钟限频落盘，退出前 flush 才保证最后一次不丢
+s7.flush();
 const reloaded = new QuoteStore(s7Path);
 check('失效次数落盘，重启后接着算', reloaded.failureStreak() === 2, String(reloaded.failureStreak()));
 
-// 7) 休市：报价冻结是预期，不能报"全部陈旧"；真故障仍要报
+// 7) 休市：取不到数据是预期，既不判异常也不发通知
 const s8 = freshStore();
 const closedOk = await rawPollOnce([fresh], s8, [], SUNDAY_NOON);
 check('周末休市 → 健康仍为 ok（不误报陈旧）', closedOk.health.status === 'ok', JSON.stringify(closedOk.health));
@@ -133,13 +135,41 @@ check('休市不产生故障提醒', closedOk.alerts.filter((a) => a.ruleId === 
 
 const s9 = freshStore();
 const closedBroken = await rawPollOnce([throwing], s9, [], SUNDAY_NOON);
-check('休市期间真故障仍判 offline', closedBroken.health.status === 'offline' && closedBroken.health.reasons.length > 0, closedBroken.health.reasons.join('; '));
+check('休市期间取不到数据仍算正常', closedBroken.health.status === 'ok' && closedBroken.health.reasons.length === 0, closedBroken.health.reasons.join('; '));
+check('休市取不到数据不发异常通知', closedBroken.alerts.filter((a) => a.ruleId === 'health').length === 0);
 check('故障期间休市标记仍在', closedBroken.health.marketClosed === true);
+
+const s9b = freshStore();
+const closedEmpty = await rawPollOnce([brokenButEmpty], s9b, [], SUNDAY_NOON);
+check('休市返回空列表也判正常', closedEmpty.health.status === 'ok' && closedEmpty.alerts.filter((a) => a.ruleId === 'health').length === 0);
 
 const s10 = freshStore();
 await rawPollOnce([fresh], s10, [], SUNDAY_NOON);
 const reopened = await rawPollOnce([fresh], s10, [], NOW);
 check('开市后回到正常判定路径', reopened.health.status === 'ok' && reopened.health.marketClosed === false);
+
+// 8) 品种下线：清掉旧采样，别继续撑大存储文件
+const s11Path = join(tmpdir(), `goldsentry-retire-${Math.random().toString(36).slice(2)}.json`);
+rmSync(s11Path, { force: true });
+const s11 = new QuoteStore(s11Path);
+s11.addSamples([
+  { symbol: 'JJC', ts: NOW, buyPrice: 880, sellPrice: 879 },
+  { symbol: 'ZS', ts: NOW, buyPrice: 881, sellPrice: 880 },
+]);
+s11.retainSymbols(['ZS']);
+const keptText = readFileSync(s11Path, 'utf8');
+check('下线品种的历史采样被清掉', !keptText.includes('"JJC"') && keptText.includes('"ZS"'));
+
+// 9) 休市时报价时间戳不变，同一条采样不该每轮重复入库
+const s12Path = join(tmpdir(), `goldsentry-dup-${Math.random().toString(36).slice(2)}.json`);
+rmSync(s12Path, { force: true });
+const s12 = new QuoteStore(s12Path);
+s12.addSamples([{ symbol: 'ZS', ts: NOW, buyPrice: 880, sellPrice: 879 }]);
+s12.flush();
+s12.addSamples([{ symbol: 'ZS', ts: NOW, buyPrice: 880, sellPrice: 879 }]);
+s12.flush();
+const dupText = readFileSync(s12Path, 'utf8');
+check('同一时间戳的重复采样只存一条', (dupText.match(/"symbol":"ZS"/g) ?? []).length === 1);
 
 console.log(failures ? `\n${failures} 项未通过` : '\n全部通过');
 process.exitCode = failures ? 1 : 0;

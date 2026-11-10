@@ -229,7 +229,6 @@ check(
 );
 check('人工点差说明写清来源', spreadFee.note.includes('用户核实'), spreadFee.note);
 check('中信人工点差为 2.7 元/克', spreadCell(0, 'ZX').text === '2.70元', spreadCell(0, 'ZX').text);
-check('只查到区间的点差原样显示', spreadCell(0, 'JJC').text === '4–6元', spreadCell(0, 'JJC').text);
 check('工商按对比表显示买卖费率', spreadCell(0, 'GS').text === '0.2%/0.5%', spreadCell(0, 'GS').text);
 check('点差缺失也退回服务费', spreadCell(undefined, 'ZS').text === '0%/0.4%');
 check('点差为负（脏数据）不显示成点差', spreadCell(-1, 'ZS').basis === 'fee');
@@ -306,6 +305,8 @@ check('箭头模式与颜色互不影响', priceTone(-1) === 'down' && !showArro
 
 // --- 悬浮球等比例缩放 ---
 check('缩放下限夹住', clampBallScale(0.1) === BALL_SCALE_MIN, String(clampBallScale(0.1)));
+check('悬浮球最小可缩到 40%', clampBallScale(0.4) === 0.4 && BALL_SCALE_MIN === 0.4, String(clampBallScale(0.4)));
+check('40% 时边长按比例缩到 42px', ballSizeFor(0.4) === 42, String(ballSizeFor(0.4)));
 check('缩放上限夹住', clampBallScale(9) === BALL_SCALE_MAX, String(clampBallScale(9)));
 check('脏缩放退回默认', clampBallScale(undefined, 1) === 1 && clampBallScale('abc', 1) === 1);
 check('字符串缩放可用', clampBallScale('1.25') === 1.25, String(clampBallScale('1.25')));
@@ -364,8 +365,6 @@ check('民生凌晨 02:15 已收盘', bankAt('MS', '2026-11-06T18:15:00Z').open 
 check('浙商凌晨 02:15 仍在交易', bankAt('ZS', '2026-11-06T18:15:00Z').open === true);
 check('周末所有银行休市', bankAt('ZS', '2026-11-07T02:00:00Z').open === false && bankAt('GS', '2026-11-07T02:00:00Z').open === false);
 check('节假日所有银行休市', bankAt('GS', '2026-10-01T02:00:00Z').text === '休市');
-check('建行积存金有自己的时段文案', tradingHoursOf('JJC')?.text === '周一 09:10–周六 02:30', tradingHoursOf('JJC')?.text);
-check('建行账户金标注连续盘', tradingHoursOf('AU9999')?.continuous === true && tradingHoursOf('AU9999')?.text.includes('连续盘'));
 
 // --- 更新列：休市时报价不动不标黄 ---
 const OPEN_NOW = at('2026-11-06T02:00:00Z');
@@ -378,6 +377,12 @@ check('一小时内按分钟', updateAgeText(OPEN_NOW - 10 * 60_000, 'realtime',
 check('日定价当日显示已定价', updateAgeText(OPEN_NOW - 10 * 60_000, 'dailyFix', OPEN_NOW) === '今日已定价');
 check('日定价跨小时按小时', updateAgeText(OPEN_NOW - 3 * 3_600_000, 'dailyFix', OPEN_NOW) === '3 小时前');
 check('没有时间戳显示未知', updateAgeText(undefined, 'realtime', OPEN_NOW) === '未知');
+
+// 每家银行按自己的时段判断：23:00 工商已收盘、浙商仍开市
+const LATE_NIGHT = at('2026-11-06T15:00:00Z');
+const lateQuote = { buyPrice: 880, sellPrice: 879.5, quotedAt: LATE_NIGHT - 40 * 60_000, basis: 'realtime' };
+check('已收盘银行的旧报价不标黄', formatQuoteCells({ ...lateQuote, symbol: 'GS' }, LATE_NIGHT).updateStale === false);
+check('仍在交易银行的旧报价标黄', formatQuoteCells({ ...lateQuote, symbol: 'ZS' }, LATE_NIGHT).updateStale === true);
 
 // --- 全屏遮挡：只有盖住任务栏那一块的全屏窗口才隐藏贴纸 ---
 const TB = { x: 0, y: 1032, width: 1920, height: 48 };
@@ -408,6 +413,12 @@ check('分时开盘/最新/高低正确', trend.open === 870 && trend.last === 8
 check('分时涨跌相对首笔', trend.changeText === '+1.15%' && trend.tone === 'up', trend.changeText);
 check('分时金额由 core 格式化', trend.lastText === '880.00' && trend.lowText === '870.00' && trend.highText === '880.00');
 check('分时横轴按北京时间自然日', trend.dayStart === TREND_NOW - 10 * 60 * 60_000 && trend.dayEnd - trend.dayStart === 86_400_000);
+check(
+  '北京自然日按 UTC+8 切',
+  beijingDateKey(Date.parse('2026-11-09T15:59:59Z')) === '2026-11-09' &&
+    beijingDateKey(Date.parse('2026-11-09T16:00:00Z')) === '2026-11-10',
+  `${beijingDateKey(Date.parse('2026-11-09T15:59:59Z'))}/${beijingDateKey(Date.parse('2026-11-09T16:00:00Z'))}`,
+);
 const trendDup = dayTrendSeries(
   [
     { symbol: 'ZS', ts: TREND_NOW, buyPrice: 880 },
@@ -451,6 +462,25 @@ check('断线阈值是 30 分钟', TREND_GAP_MS === 30 * 60_000);
 check('分时点自带北京时间，面板不用自己拼', trend.points[2].timeText === '10:00', trend.points[2].timeText);
 check('全天模式横轴固定 00/12/24', trend.axisLabels.join('|') === '00:00|12:00|24:00', trend.axisLabels.join('|'));
 
+// --- 7/10 天走势：跨自然日，横轴换成日期 ---
+const trend7 = dayTrendSeries(trendSamples, 'ZS', TREND_NOW, { range: '7d' });
+check('7 天窗口从当前往回截', trend7.windowStart === TREND_NOW - 7 * 86_400_000 && trend7.windowEnd === TREND_NOW);
+check('7 天包含多日采样', trend7.points.length === 5, String(trend7.points.length));
+check(
+  '7 天标题与日期横轴',
+  trend7.windowText === '近 7 天' && trend7.axisLabels.every((label) => /^\d{2}-\d{2}$/.test(label)),
+  trend7.axisLabels.join('|'),
+);
+check('多日悬停带日期', /^\d{2}-\d{2} \d{2}:\d{2}$/.test(trend7.points[0].timeText), trend7.points[0].timeText);
+check('多日图只在真实时间空档断线', trend7.points.filter((point) => point.gap).length === 1, String(trend7.points.filter((point) => point.gap).length));
+const trend10 = dayTrendSeries(trendSamples, 'ZS', TREND_NOW, { range: '10d' });
+check(
+  '10 天窗口更宽且仍可绘制',
+  trend10.windowStart === TREND_NOW - 10 * 86_400_000 && trend10.points.length === trend7.points.length,
+);
+const trend7Empty = dayTrendSeries([], 'ZS', TREND_NOW, { range: '7d' });
+check('多日模式没有采样时为空', trend7Empty.points.length === 0 && trend7Empty.windowText === '近 7 天');
+
 // --- 分时图配置：显示开关、时间范围与窗口裁剪 ---
 check(
   '分时配置缺省为显示 + 全天',
@@ -464,7 +494,7 @@ check(
   '分时配置脏 range 退回全天',
   JSON.stringify(normalizeTrendSettings({ enabled: 'no', range: '3h' })) === JSON.stringify({ enabled: true, range: 'day' }),
 );
-check('时间范围覆盖 30 分钟到全天', TREND_RANGE_ORDER.join('|') === '30m|1h|2h|4h|6h|12h|day', TREND_RANGE_ORDER.join('|'));
+check('时间范围覆盖 30 分钟到全天', TREND_RANGE_ORDER.join('|') === '30m|1h|2h|4h|6h|12h|day|7d|10d', TREND_RANGE_ORDER.join('|'));
 check(
   '新增范围可保存',
   JSON.stringify(normalizeTrendSettings({ enabled: true, range: '4h' })) === JSON.stringify({ enabled: true, range: '4h' }),

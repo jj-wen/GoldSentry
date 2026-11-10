@@ -110,7 +110,7 @@ th, td {
   text-overflow: ellipsis;
 }
 
-/* 品种列放下最长的「● 账户金95」（11px 约 61px）即可；写死 px 避免轮询时列宽跟着数字跳 */
+/* 品种列按最长的「● 广发」估宽；写死 px 避免轮询时列宽跟着数字跳 */
 th:first-child, td:first-child { text-align: left; width: 84px; }
 
 /* 数字列按内容定宽，省出来的宽度摊到各列间隙，品种和买入之间不再空一大截 */
@@ -333,7 +333,9 @@ tbody tr.primary td.name { color: var(--accent); }
 }
 
 .bark-row input[type='text'],
-.bark-row input[type='password'] {
+.bark-row input[type='password'],
+.bark-row input[type='number'],
+.bark-row select {
   flex: 1;
   min-width: 0;
   font: inherit;
@@ -342,6 +344,10 @@ tbody tr.primary td.name { color: var(--accent); }
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 3px 6px;
+}
+
+.bark-row input.mail-port {
+  flex: 0 0 72px;
 }
 
 .hint { margin: 8px 12px 0; color: var(--muted); font-size: 11px; }
@@ -482,7 +488,8 @@ button.danger { color: #f0b8b0; }
 
 .calc-field { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 11px; }
 
-.calc-field input {
+.calc-field input,
+.calc-field select {
   flex: 1;
   min-width: 0;
   font: inherit;
@@ -515,9 +522,9 @@ button.danger { color: #f0b8b0; }
 
 .calc-row {
   display: grid;
-  grid-template-columns: 18px 36px 76px minmax(0, 1fr) auto;
+  grid-template-columns: 18px 34px 64px 40px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
   font-size: 11px;
@@ -556,21 +563,26 @@ button.danger { color: #f0b8b0; }
   font-size: 11px;
 }
 
-.calc-sim-row { display: flex; align-items: baseline; gap: 6px; color: var(--muted); flex-wrap: wrap; }
+.calc-sim-title { display: flex; align-items: baseline; gap: 6px; color: var(--fg); font-size: 12px; }
 
-.calc-sim-row b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+.calc-sim-title em { font-style: normal; color: var(--muted); font-size: 10px; }
 
-.calc-sim-row select {
-  font: inherit;
-  margin-left: auto;
-  color: var(--fg);
-  background: #1c1e22;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 2px 4px;
+.calc-positions { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+
+.calc-pos-row {
+  display: grid;
+  grid-template-columns: 40px 46px 64px 64px minmax(0, 1fr);
+  gap: 6px;
+  align-items: baseline;
 }
 
-.calc-pnl { font-size: 13px; font-weight: 600; }
+.calc-pos-row b { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.calc-pos-head { color: var(--muted); font-size: 10px; }
+
+.calc-pos-total { border-top: 1px solid var(--line); margin-top: 2px; padding-top: 4px; }
+
+.calc-pos-empty { color: var(--muted); }
 
 .calc-tone-up { color: #ef5350; }
 
