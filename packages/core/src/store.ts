@@ -189,10 +189,10 @@ export class QuoteStore {
     this.data.samples = this.data.samples.filter((s) => s.ts >= cutoff);
   }
 
-  /** 先写临时文件再改名，避免轮询中途崩溃留下半个 JSON */
+  /** 先写临时文件再改名，避免轮询中途崩溃留下半个 JSON；临时文件按进程区分，两个实例同时写也不会互相截断 */
   private save(): void {
     mkdirSync(dirname(this.filePath), { recursive: true });
-    const tmp = `${this.filePath}.tmp`;
+    const tmp = `${this.filePath}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(this.data));
     renameSync(tmp, this.filePath);
     this.dirty = false;
