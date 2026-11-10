@@ -512,6 +512,37 @@ button.danger { color: #f0b8b0; }
 
 .calc-error { margin: 6px 0 0; color: #f0b8b0; font-size: 11px; }
 
+.calc-fees { border: 1px solid var(--line); border-radius: 8px; background: #24262b; padding: 7px 10px; }
+
+.calc-fees summary { cursor: pointer; color: var(--fg); font-size: 12px; }
+
+.calc-fees summary em { font-style: normal; color: var(--muted); font-size: 10px; margin-left: 6px; }
+
+.calc-fee-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 62px 54px 54px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.calc-fee-head { color: var(--muted); font-size: 10px; padding-top: 7px; }
+
+.calc-fee-row input,
+.calc-fee-row select {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: var(--fg);
+  background: #1c1e22;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 5px;
+}
+
+.calc-fees .hint { margin: 6px 0 0; }
+
 .calc-list { border: 1px solid var(--line); border-radius: 8px; background: #24262b; overflow: hidden; }
 
 .calc-list-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--line); }

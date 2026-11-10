@@ -1,7 +1,7 @@
 {
   "name": "@goldsentry/vscode",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "displayName": "GoldSentry 积存金监控",
   "description": "在 VS Code 状态栏监控多家银行积存金实时价并做到价提醒",
   "publisher": "goldsentry",

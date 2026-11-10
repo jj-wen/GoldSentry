@@ -56,7 +56,7 @@
         <div class="calc-card">
           <span>总成本</span>
           <b id="calc-cost">¥0.00</b>
-          <em>仅统计选中的买入</em>
+          <em>仅统计选中的买入，含手续费</em>
         </div>
         <div class="calc-card accent">
           <span>平均价</span>
@@ -84,6 +84,15 @@
         <p id="calc-error" class="calc-error" hidden></p>
       </section>
 
+      <details class="calc-fees">
+        <summary>银行手续费 <em>填一次，买卖自动计入</em></summary>
+        <div class="calc-fee-row calc-fee-head">
+          <span>银行</span><span>计费方式</span><span>买入</span><span>卖出</span>
+        </div>
+        <div id="calc-fee-rows"></div>
+        <p class="hint">百分比按成交金额收，元/克按克数收，元/笔每单固定收。记录单价如果已经是含点差的成交价，把该行卖出费改成 0 以免重复扣；修改后立即重算。</p>
+      </details>
+
       <section class="calc-list">
         <div class="calc-list-head">
           <span class="grow" id="calc-total">共 0 条</span>
@@ -93,7 +102,7 @@
         <div id="calc-rows"></div>
       </section>
       <section class="calc-sim">
-        <div class="calc-sim-title">模拟持仓 <em>按各行实时卖出价估值</em></div>
+        <div class="calc-sim-title">模拟持仓 <em>按各行实时卖出价估值，已扣手续费</em></div>
         <div id="calc-positions" class="calc-positions"></div>
         <p class="calc-invalid" id="calc-invalid" hidden></p>
       </section>

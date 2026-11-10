@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('gold', {
   calcLoad: (args) => ipcRenderer.invoke('calc:load', args),
   calcAdd: (args) => ipcRenderer.invoke('calc:add', args),
   calcRemove: (args) => ipcRenderer.invoke('calc:remove', args),
+  calcSaveFees: (args) => ipcRenderer.invoke('calc:save-fees', args),
   calcSummary: (args) => ipcRenderer.invoke('calc:summary', args),
   quit: () => ipcRenderer.send('gold:quit'),
   notifyTest: () => ipcRenderer.send('gold:notify-test'),

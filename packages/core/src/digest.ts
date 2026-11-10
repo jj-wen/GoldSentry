@@ -3,6 +3,7 @@ import { tradingDayKey } from './market.ts';
 import { formatPct, formatPrice } from './format.ts';
 import { dailyPortfolio, formatGrams } from './calculator.ts';
 import type { CalcRecord } from './calculator.ts';
+import type { CalcFeeBook } from './fees.ts';
 
 export interface DailyDigest {
   /** 交易日的键，如 2026-11-09（凌晨 02:30 前的夜盘算前一日） */
@@ -16,6 +17,8 @@ export interface DigestOptions {
   primarySymbol?: string;
   /** 计算器记录：按每家银行自己的收盘卖出价追加模拟持仓与当日收益 */
   calcRecords?: ReadonlyArray<CalcRecord>;
+  /** 计算器按银行配置的手续费，日报的市值与收益同样扣掉 */
+  calcFees?: CalcFeeBook;
 }
 
 interface DayStat {
@@ -64,6 +67,7 @@ function portfolioSection(
   primary: string | undefined,
   records: ReadonlyArray<CalcRecord> | undefined,
   day: string,
+  fees: CalcFeeBook = {},
 ): string[] {
   if (!records?.length) return [];
   const held = [...new Set(records.map((record) => record.symbol).filter(Boolean))];
@@ -91,7 +95,7 @@ function portfolioSection(
 
   for (const symbol of ordered) {
     const { close, prev } = lastSellPrice(samples, symbol, day);
-    const portfolio = dailyPortfolio(records, symbol, day, close, prev);
+    const portfolio = dailyPortfolio(records, symbol, day, close, prev, fees);
     const label = labels[symbol] ?? symbol;
     if (!portfolio) {
       missing.push(label);
@@ -225,7 +229,7 @@ export function buildDailyDigest(
   }
   if (!lines.length) return null;
 
-  lines.push(...portfolioSection(samples, labels, primary, options.calcRecords, day));
+  lines.push(...portfolioSection(samples, labels, primary, options.calcRecords, day, options.calcFees));
 
   return { day, title: `积存金日报 · ${day}`, body: lines.join('\n') };
 }

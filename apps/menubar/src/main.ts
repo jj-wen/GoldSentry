@@ -30,14 +30,18 @@ import {
   calcDeleteError,
   calcEstimate,
   calcEstimateText,
+  calcFeeAmount,
   calcLedger,
   calcSelection,
+  CALC_FEE_MODE_ORDER,
+  CALC_FEE_MODE_TEXT,
   clampBallScale,
   clampIntoWorkArea,
   clampOpacity,
   compileRules,
   DEFAULT_DISPLAY,
   DEFAULT_TREND_SETTINGS,
+  defaultCalcFees,
   detectTaskbar,
   displayFromArrowMode,
   evaluatePortfolioRules,
@@ -50,6 +54,7 @@ import {
   isPortfolioKind,
   JD_SYMBOLS,
   normalizeBotType,
+  normalizeCalcFees,
   normalizeCalcRecords,
   normalizeDisplay,
   normalizeSymbolOrder,
@@ -92,6 +97,9 @@ import {
   type BarkConfig,
   type BotConfig,
   type BotType,
+  type CalcFee,
+  type CalcFeeBook,
+  type CalcFeeMode,
   type CalcRecord,
   type CalcSide,
   type DisplayToggles,
@@ -357,6 +365,7 @@ interface Settings {
   ball: { enabled: boolean; opacity: number; scale: number; x: number | null; y: number | null };
   taskbar: { enabled: boolean; offset: number | null; trend: boolean };
   trend: TrendSettings;
+  calcFees: CalcFeeBook;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -375,6 +384,7 @@ const DEFAULT_SETTINGS: Settings = {
   ball: { enabled: true, opacity: 0.9, scale: 1, x: null, y: null },
   taskbar: { enabled: true, offset: null, trend: false },
   trend: DEFAULT_TREND_SETTINGS,
+  calcFees: defaultCalcFees(),
 };
 
 /** 建行相关品种已停止监测，旧配置里的提醒与排序一并清掉 */
@@ -393,6 +403,7 @@ let settings: Settings = {
   ball: { ...DEFAULT_SETTINGS.ball },
   taskbar: { ...DEFAULT_SETTINGS.taskbar },
   trend: { ...DEFAULT_TREND_SETTINGS },
+  calcFees: defaultCalcFees(),
 };
 
 /** 邮件配置要逐字段清洗：端口、协议开关都可能有历史脏值；口令只留在本机 */
@@ -469,6 +480,7 @@ function loadSettings(): Settings {
         trend: raw.taskbar?.trend === true,
       },
       trend: normalizeTrendSettings(raw.trend),
+      calcFees: normalizeCalcFees(raw.calcFees),
     };
   } catch {
     return {
@@ -483,6 +495,7 @@ function loadSettings(): Settings {
       ball: { ...DEFAULT_SETTINGS.ball },
       taskbar: { ...DEFAULT_SETTINGS.taskbar },
       trend: { ...DEFAULT_TREND_SETTINGS },
+      calcFees: defaultCalcFees(),
     };
   }
 }
@@ -501,13 +514,25 @@ interface CalcRowView {
   date: string;
   gramsText: string;
   priceText: string;
+  /** 已扣手续费的净额：买入是成本，卖出是回款 */
   amountText: string;
+  feeText: string;
+}
+
+interface CalcFeeRowView {
+  symbol: string;
+  label: string;
+  mode: CalcFeeMode;
+  buy: number;
+  sell: number;
 }
 
 interface CalcBaseView {
   rows: CalcRowView[];
   symbols: Array<{ symbol: string; label: string }>;
   defaultSymbol: string;
+  fees: CalcFeeRowView[];
+  feeModes: Array<{ mode: CalcFeeMode; text: string }>;
   counts: { total: number; buys: number; sells: number };
 }
 
@@ -582,18 +607,28 @@ function buildCalcBase(): CalcBaseView {
     (a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt || a.id.localeCompare(b.id),
   );
   return {
-    rows: sorted.map((record) => ({
-      id: record.id,
-      side: record.side,
-      symbol: record.symbol,
-      symbolText: labelOf.get(record.symbol) ?? record.symbol,
-      date: record.date,
-      gramsText: formatGrams(record.grams),
-      priceText: formatPrice(record.price),
-      amountText: `¥${formatPrice(calcAmount(record))}`,
-    })),
+    rows: sorted.map((record) => {
+      const fee = calcFeeAmount(settings.calcFees[record.symbol], record.side, record.grams, record.price);
+      const gross = calcAmount(record);
+      return {
+        id: record.id,
+        side: record.side,
+        symbol: record.symbol,
+        symbolText: labelOf.get(record.symbol) ?? record.symbol,
+        date: record.date,
+        gramsText: formatGrams(record.grams),
+        priceText: formatPrice(record.price),
+        amountText: `¥${formatPrice(record.side === 'buy' ? gross + fee : gross - fee)}`,
+        feeText: fee > 0 ? `费用 ¥${formatPrice(fee)}` : '',
+      };
+    }),
     symbols: order,
     defaultSymbol: settings.calcSymbol || settings.primarySymbol,
+    fees: order.map((item) => {
+      const fee = settings.calcFees[item.symbol] ?? { mode: 'pct' as CalcFeeMode, buy: 0, sell: 0 };
+      return { symbol: item.symbol, label: item.label, mode: fee.mode, buy: fee.buy, sell: fee.sell };
+    }),
+    feeModes: CALC_FEE_MODE_ORDER.map((mode) => ({ mode, text: CALC_FEE_MODE_TEXT[mode] })),
     counts: {
       total: calcRecords.length,
       buys: calcRecords.filter((record) => record.side === 'buy').length,
@@ -608,16 +643,20 @@ function buildCalcStats(symbol: string, ids: string[]): CalcStatsView {
     quotes.find((quote) => quote.symbol === symbol) ??
     quotes.find((quote) => quote.symbol === settings.primarySymbol) ??
     quotes[0];
-  const selection = calcSelection(calcRecords, ids);
+  const selection = calcSelection(calcRecords, ids, settings.calcFees);
   const picked = new Set(ids);
   const selectedBuys = calcRecords.filter((record) => record.side === 'buy' && picked.has(record.id)).length;
   const totalBuys = calcRecords.filter((record) => record.side === 'buy').length;
-  const ledger = calcLedger(calcRecords);
-  const estimate = calcEstimate(ledger, chosen?.sellPrice);
+  const ledger = calcLedger(calcRecords, settings.calcFees);
+  const estimate = calcEstimate(
+    ledger,
+    chosen?.sellPrice,
+    chosen ? settings.calcFees[chosen.symbol] : undefined,
+  );
   const estimateText = calcEstimateText(estimate);
   const prices: Record<string, number | undefined> = {};
   for (const quote of quotes) prices[quote.symbol] = quote.sellPrice;
-  const summary = portfolioSummary(calcRecords, prices);
+  const summary = portfolioSummary(calcRecords, prices, settings.calcFees);
   const orderIndex = new Map(quotes.map((quote, index) => [quote.symbol, index]));
   const labelOf = new Map(quotes.map((quote) => [quote.symbol, quote.label]));
   const positions = (summary?.positions ?? [])
@@ -1355,6 +1394,7 @@ async function maybeSendDigest(): Promise<void> {
   const digest = store.digest(now, labels, {
     primarySymbol: settings.primarySymbol,
     calcRecords,
+    calcFees: settings.calcFees,
   });
   if (!digest || store.lastDigestDay() === digest.day) return;
   // 先落盘再推送：推送失败也不每分钟重试，避免刷屏
@@ -1450,7 +1490,7 @@ async function poll(): Promise<void> {
     pushState();
     if (rules.some((rule) => rule.symbol === PORTFOLIO_SYMBOL && rule.enabled)) {
       const prices = Object.fromEntries(result.quotes.map((quote) => [quote.symbol, quote.sellPrice]));
-      const summary = portfolioSummary(calcRecords, prices);
+      const summary = portfolioSummary(calcRecords, prices, settings.calcFees);
       result.alerts.push(...evaluatePortfolioRules(rules, summary, store));
     }
     if (result.alerts.length) await dispatch(result.alerts);
@@ -1854,7 +1894,7 @@ ipcMain.handle(
     if (!Number.isFinite(grams) || grams <= 0) return { ok: false, error: '克数要大于 0' };
     if (!Number.isFinite(price) || price <= 0) return { ok: false, error: '单价要大于 0' };
     if (side === 'sell') {
-      const ledger = calcLedger(calcRecords.filter((record) => record.symbol === symbol));
+      const ledger = calcLedger(calcRecords.filter((record) => record.symbol === symbol), settings.calcFees);
       if (grams > ledger.grams + 1e-6) {
         return { ok: false, error: `卖出克数超过该银行当前持仓 ${formatGrams(ledger.grams)}` };
       }
@@ -1883,6 +1923,13 @@ ipcMain.handle('calc:remove', (_event, args: { ids?: unknown; symbol?: string })
     saveCalcRecords();
   }
   return calcView(args?.symbol, ids);
+});
+ipcMain.handle('calc:save-fees', (_event, args: { fees?: unknown; symbol?: unknown; ids?: unknown }) => {
+  const fees = normalizeCalcFees(args?.fees);
+  const before = JSON.stringify(settings.calcFees);
+  settings.calcFees = fees;
+  if (JSON.stringify(fees) !== before) saveSettings();
+  return { ok: true, ...calcView(typeof args?.symbol === 'string' ? args.symbol : '', normalizeCalcIds(args?.ids)) };
 });
 ipcMain.on('gold:quit', () => app.quit());
 ipcMain.on('gold:notify-test', () => sendTestNotification());

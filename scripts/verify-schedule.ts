@@ -1,4 +1,4 @@
-import { buildDailyDigest, inQuietHours, parseHhmm, timeReached, tradingDayKey } from '../packages/core/src/index.ts';
+import { buildDailyDigest, defaultCalcFees, inQuietHours, parseHhmm, timeReached, tradingDayKey } from '../packages/core/src/index.ts';
 
 const at = (iso: string) => Date.parse(iso);
 
@@ -90,6 +90,19 @@ check(
   !!withPortfolio?.body.includes('当日 +136.00（+1.56%）') &&
     !!withPortfolio?.body.includes('累计已实现 +160.00'),
   withPortfolio?.body,
+);
+const withFees = buildDailyDigest(portfolioSamples, { ZS: '浙商' }, at('2026-11-07T01:00:00Z'), {
+  primarySymbol: 'ZS',
+  calcRecords: records,
+  calcFees: defaultCalcFees(),
+});
+check(
+  '日报估值扣掉按银行配置的手续费',
+  !!withFees?.body.includes('市值 ¥7047.70') &&
+    !!withFees?.body.includes('浮动 +647.70（+10.12%）') &&
+    !!withFees?.body.includes('当日 +135.46（+1.56%）') &&
+    !!withFees?.body.includes('累计已实现 +152.96'),
+  withFees?.body,
 );
 const noPrev = buildDailyDigest(
   portfolioSamples.filter((sample) => sample.ts >= at('2026-11-06T00:00:00Z')),

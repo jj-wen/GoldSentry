@@ -53,7 +53,24 @@ export {
   type MarketSession,
   type TradingHoursInfo,
 } from './market.ts';
-export { feeAgeDays, feeCell, feeOf, feeShortText, FEE_STALE_DAYS, PRODUCT_FEES, type FeeCell, type FeeInfo } from './fees.ts';
+export {
+  calcFeeAmount,
+  CALC_FEE_MODE_ORDER,
+  CALC_FEE_MODE_TEXT,
+  defaultCalcFees,
+  feeAgeDays,
+  feeCell,
+  feeOf,
+  feeShortText,
+  FEE_STALE_DAYS,
+  normalizeCalcFees,
+  PRODUCT_FEES,
+  type CalcFee,
+  type CalcFeeBook,
+  type CalcFeeMode,
+  type FeeCell,
+  type FeeInfo,
+} from './fees.ts';
 export { backoffSeconds, BACKOFF_AFTER_FAILURES, BACKOFF_MAX_SECONDS } from './backoff.ts';
 export { sendBark, sendAlertsToBark, sendWebhook, sendAlertsToWebhook, type BarkConfig, type BarkResult, type WebhookConfig, type WebhookResult } from './notify.ts';
 export { sendMail, sendAlertsToMail, type MailConfig, type MailResult } from './mail.ts';

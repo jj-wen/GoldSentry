@@ -1,5 +1,7 @@
 import { formatPct, formatPrice, priceTone } from './format.ts';
 import type { PriceTone } from './format.ts';
+import { calcFeeAmount } from './fees.ts';
+import type { CalcFee, CalcFeeBook } from './fees.ts';
 
 /** 一笔买入/卖出记录：成本、均价与盈亏只在这里算，外壳只负责展示 */
 export type CalcSide = 'buy' | 'sell';
@@ -118,8 +120,11 @@ export interface SymbolLedger {
 }
 
 /** 按银行拆账本；顺序按首次出现，外壳可以再按面板顺序排 */
-export function calcLedgersBySymbol(records: ReadonlyArray<CalcRecord>): SymbolLedger[] {
-  return [...groupBySymbol(records)].map(([symbol, list]) => ({ symbol, ledger: calcLedger(list) }));
+export function calcLedgersBySymbol(
+  records: ReadonlyArray<CalcRecord>,
+  fees: CalcFeeBook = {},
+): SymbolLedger[] {
+  return [...groupBySymbol(records)].map(([symbol, list]) => ({ symbol, ledger: calcLedger(list, fees) }));
 }
 
 function chronological(records: CalcRecord[]): CalcRecord[] {
@@ -133,24 +138,24 @@ export function calcAmount(record: CalcRecord): number {
   return record.grams * record.price;
 }
 
-/** 选中记录的汇总只统计买入：均价是买入成本口径，卖出不参与 */
-export function calcSelection(records: CalcRecord[], ids: string[]): CalcSelection {
+/** 选中记录的汇总只统计买入：均价是买入成本口径（含买入手续费），卖出不参与 */
+export function calcSelection(records: CalcRecord[], ids: string[], fees: CalcFeeBook = {}): CalcSelection {
   const picked = new Set(ids);
   let grams = 0;
   let cost = 0;
   for (const record of records) {
     if (record.side !== 'buy' || !picked.has(record.id)) continue;
     grams += record.grams;
-    cost += record.grams * record.price;
+    cost += record.grams * record.price + calcFeeAmount(fees[record.symbol], 'buy', record.grams, record.price);
   }
   return { grams, cost, avgPrice: grams > EPSILON ? cost / grams : null };
 }
 
 /**
- * 移动加权平均：买入抬成本，卖出按当时的均价扣减成本并结算已实现盈亏。
+ * 移动加权平均：买入抬成本（含买入手续费），卖出按当时的均价扣减成本并结算已实现盈亏（扣卖出费）。
  * 卖出超过持仓属于不一致数据，这里按可卖部分计算并把问题记在 invalidNote 里。
  */
-export function calcLedger(records: CalcRecord[]): CalcLedger {
+export function calcLedger(records: CalcRecord[], fees: CalcFeeBook = {}): CalcLedger {
   let grams = 0;
   let cost = 0;
   let realized = 0;
@@ -158,9 +163,10 @@ export function calcLedger(records: CalcRecord[]): CalcLedger {
   let invalidNote = '';
 
   for (const record of chronological(records)) {
+    const fee = fees[record.symbol];
     if (record.side === 'buy') {
       grams += record.grams;
-      cost += record.grams * record.price;
+      cost += record.grams * record.price + calcFeeAmount(fee, 'buy', record.grams, record.price);
       continue;
     }
     if (record.grams > grams + EPSILON && !invalid) {
@@ -169,7 +175,9 @@ export function calcLedger(records: CalcRecord[]): CalcLedger {
     }
     const sold = Math.min(record.grams, grams);
     const avg = grams > EPSILON ? cost / grams : 0;
-    realized += sold * record.price - sold * avg;
+    // 超卖时只按实际可卖的克数计手续费，避免把不存在的成交也算进去
+    const sellFee = calcFeeAmount(fee, 'sell', sold, record.price);
+    realized += sold * record.price - sellFee - sold * avg;
     cost -= sold * avg;
     grams -= sold;
     if (grams <= EPSILON) {
@@ -225,6 +233,7 @@ export interface PortfolioSummary {
 export function portfolioSummary(
   records: ReadonlyArray<CalcRecord>,
   sellPrices: Record<string, number | undefined>,
+  fees: CalcFeeBook = {},
 ): PortfolioSummary | null {
   if (!records.length) return null;
   const positions: PortfolioPosition[] = [];
@@ -238,10 +247,17 @@ export function portfolioSummary(
   let invalidNote = '';
 
   for (const [symbol, list] of groupBySymbol(records)) {
-    const ledger = calcLedger(list);
+    const ledger = calcLedger(list, fees);
     const price = sellPrices[symbol];
     const hasPrice = typeof price === 'number' && Number.isFinite(price) && price > 0;
-    const valueOf = ledger.grams > EPSILON ? (hasPrice ? ledger.grams * (price as number) : null) : 0;
+    // 市值按"现在卖出"口径：扣掉卖出费，和已实现盈亏一致
+    const valueOf =
+      ledger.grams > EPSILON
+        ? hasPrice
+          ? ledger.grams * (price as number) -
+            calcFeeAmount(fees[symbol], 'sell', ledger.grams, price as number)
+          : null
+        : 0;
     const pnlOf = valueOf === null ? null : valueOf - ledger.cost;
 
     positions.push({
@@ -317,33 +333,39 @@ export function dailyPortfolio(
   day: string,
   closeSell: number | undefined,
   prevCloseSell: number | undefined,
+  fees: CalcFeeBook = {},
 ): DailyPortfolio | null {
   const own = records.filter((record) => record.symbol === symbol);
   if (!own.length) return null;
   if (typeof closeSell !== 'number' || !Number.isFinite(closeSell) || closeSell <= 0) return null;
 
+  const fee = fees[symbol];
   const before = own.filter((record) => record.date < day);
   const today = own.filter((record) => record.date === day);
-  const start = calcLedger(before);
-  const end = calcLedger(own.filter((record) => record.date <= day));
+  const start = calcLedger(before, fees);
+  const end = calcLedger(own.filter((record) => record.date <= day), fees);
 
   let buysCost = 0;
   let sellsProceeds = 0;
   for (const record of today) {
-    if (record.side === 'buy') buysCost += calcAmount(record);
-    else sellsProceeds += calcAmount(record);
+    if (record.side === 'buy') {
+      buysCost += calcAmount(record) + calcFeeAmount(fee, 'buy', record.grams, record.price);
+    } else {
+      sellsProceeds += calcAmount(record) - calcFeeAmount(fee, 'sell', record.grams, record.price);
+    }
   }
 
   // 没有隔夜持仓时不需要前收：当日盈亏就是当日买卖相对收盘价的差
   const startValue =
     start.grams > EPSILON
       ? typeof prevCloseSell === 'number' && Number.isFinite(prevCloseSell) && prevCloseSell > 0
-        ? start.grams * prevCloseSell
+        ? start.grams * prevCloseSell - calcFeeAmount(fee, 'sell', start.grams, prevCloseSell)
         : null
       : 0;
+  const closeValue =
+    end.grams * closeSell - calcFeeAmount(fee, 'sell', end.grams, closeSell);
   const dayPnl =
-    startValue === null ? null : end.grams * closeSell - startValue - buysCost + sellsProceeds;
-  const closeValue = end.grams * closeSell;
+    startValue === null ? null : closeValue - startValue - buysCost + sellsProceeds;
   const floating = closeValue - end.cost;
 
   return {
@@ -361,11 +383,15 @@ export function dailyPortfolio(
   };
 }
 
-/** 按实时卖出价估算持仓市值与浮动盈亏；没有持仓或没有价格时返回 null */
-export function calcEstimate(ledger: CalcLedger, sellPrice: number | undefined): CalcEstimate | null {
+/** 按实时卖出价估算持仓市值与浮动盈亏；卖出费会让市值变成实际可到手金额 */
+export function calcEstimate(
+  ledger: CalcLedger,
+  sellPrice: number | undefined,
+  fee?: CalcFee,
+): CalcEstimate | null {
   if (ledger.grams <= EPSILON) return null;
   if (typeof sellPrice !== 'number' || !Number.isFinite(sellPrice)) return null;
-  const value = ledger.grams * sellPrice;
+  const value = ledger.grams * sellPrice - calcFeeAmount(fee, 'sell', ledger.grams, sellPrice);
   const pnl = value - ledger.cost;
   return {
     value,

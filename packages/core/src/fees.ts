@@ -76,3 +76,98 @@ export function feeCell(symbol: string, now = Date.now()): FeeCell {
     note: stale ? `${note}；已 ${age} 天未核对，请以银行 App 为准` : note,
   };
 }
+
+/* ---------- 计算器手续费：按银行配置一次，买卖时自动计入 ---------- */
+
+/** pct=按成交金额百分比；perGram=元/克；perOrder=元/笔 */
+export type CalcFeeMode = 'pct' | 'perGram' | 'perOrder';
+
+export const CALC_FEE_MODE_ORDER: CalcFeeMode[] = ['pct', 'perGram', 'perOrder'];
+
+export const CALC_FEE_MODE_TEXT: Record<CalcFeeMode, string> = {
+  pct: '百分比',
+  perGram: '元/克',
+  perOrder: '元/笔',
+};
+
+export interface CalcFee {
+  mode: CalcFeeMode;
+  /** 买入费用；单位由 mode 决定 */
+  buy: number;
+  /** 卖出费用；单位由 mode 决定 */
+  sell: number;
+}
+
+export type CalcFeeBook = Record<string, CalcFee>;
+
+/**
+ * 从已核实的公开费率推默认值：
+ * - 工行/浙商是买卖百分比，直接按金额收；
+ * - 民生/中信/兴业等是点差，按卖出侧每克扣（等价于按银行赎回价成交）；
+ * - 广发只查到"有优惠"，默认 0，等用户自己填。
+ */
+export function defaultCalcFees(): CalcFeeBook {
+  const book: CalcFeeBook = {};
+  for (const [symbol, fee] of Object.entries(PRODUCT_FEES)) {
+    if (fee.buyPct !== undefined || fee.sellPct !== undefined) {
+      book[symbol] = { mode: 'pct', buy: fee.buyPct ?? 0, sell: fee.sellPct ?? 0 };
+    } else if (fee.spread !== undefined) {
+      book[symbol] = { mode: 'perGram', buy: 0, sell: fee.spread };
+    } else {
+      book[symbol] = { mode: 'pct', buy: 0, sell: 0 };
+    }
+  }
+  return book;
+}
+
+function feeModeOf(value: unknown, fallback: CalcFeeMode): CalcFeeMode {
+  return value === 'pct' || value === 'perGram' || value === 'perOrder' ? value : fallback;
+}
+
+/** 百分比最多 100，元/克与元/笔给足上限；非法值退回默认，不把 NaN 带进账本 */
+function feeValueOf(value: unknown, fallback: number, mode: CalcFeeMode): number {
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num) || num < 0) return fallback;
+  const max = mode === 'pct' ? 100 : mode === 'perGram' ? 10_000 : 1_000_000;
+  return Math.min(max, Math.round(num * 10_000) / 10_000);
+}
+
+/** 面板提交的是 DOM 字符串；缺字段的银行沿用已核实默认值，用户显式填 0 会被保留 */
+export function normalizeCalcFees(raw: unknown): CalcFeeBook {
+  const defaults = defaultCalcFees();
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const out: CalcFeeBook = {};
+  for (const symbol of new Set([...Object.keys(defaults), ...Object.keys(source)])) {
+    const base = defaults[symbol] ?? { mode: 'pct' as CalcFeeMode, buy: 0, sell: 0 };
+    const item = source[symbol];
+    if (!item || typeof item !== 'object') {
+      out[symbol] = { ...base };
+      continue;
+    }
+    const row = item as Partial<CalcFee>;
+    const mode = feeModeOf(row.mode, base.mode);
+    const fallbackBuy = mode === base.mode ? base.buy : 0;
+    const fallbackSell = mode === base.mode ? base.sell : 0;
+    out[symbol] = {
+      mode,
+      buy: feeValueOf(row.buy, fallbackBuy, mode),
+      sell: feeValueOf(row.sell, fallbackSell, mode),
+    };
+  }
+  return out;
+}
+
+/** 单笔费用：百分比按金额、元/克按克数、元/笔按笔；没有配置或金额为 0 时不收费 */
+export function calcFeeAmount(
+  fee: CalcFee | undefined,
+  side: 'buy' | 'sell',
+  grams: number,
+  price: number,
+): number {
+  if (!fee || !Number.isFinite(grams) || grams <= 0 || !Number.isFinite(price) || price < 0) return 0;
+  const value = side === 'buy' ? fee.buy : fee.sell;
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (fee.mode === 'pct') return (grams * price * value) / 100;
+  if (fee.mode === 'perGram') return grams * value;
+  return value;
+}

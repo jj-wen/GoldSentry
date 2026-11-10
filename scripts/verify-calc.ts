@@ -3,13 +3,17 @@ import {
   calcDeleteError,
   calcEstimate,
   calcEstimateText,
+  calcFeeAmount,
   calcLedger,
   calcLedgersBySymbol,
   calcSelection,
+  defaultCalcFees,
   formatGrams,
   isCalcDate,
+  normalizeCalcFees,
   normalizeCalcRecords,
   portfolioSummary,
+  dailyPortfolio,
   type CalcRecord,
 } from '../packages/core/src/index.ts';
 
@@ -165,6 +169,83 @@ const unordered = calcLedger([
   record('u2', 'buy', '2026-10-02', 10, 900, 2),
 ]);
 check('乱序记录按日期重排后计算', near(unordered.realized, 500) && near(unordered.grams, 15), `${unordered.grams}g / ${unordered.realized}`);
+
+// 9) 按银行手续费：百分比 / 元每克 / 元每笔都要能自动计入
+const fees = defaultCalcFees();
+check(
+  '默认费率覆盖百分比与元/克两种口径',
+  fees.GS.mode === 'pct' && near(fees.GS.buy, 0.2) && near(fees.GS.sell, 0.5),
+  JSON.stringify(fees.GS),
+);
+check('浙商买入免、卖出 0.4%', fees.ZS.mode === 'pct' && near(fees.ZS.buy, 0) && near(fees.ZS.sell, 0.4));
+check('民生点差按卖出侧元/克', fees.MS.mode === 'perGram' && near(fees.MS.buy, 0) && near(fees.MS.sell, 3.8));
+check('未知费率的银行默认 0', fees.GF.mode === 'pct' && near(fees.GF.buy, 0) && near(fees.GF.sell, 0));
+const customFees = normalizeCalcFees({
+  ZS: { mode: 'pct', buy: '0', sell: '0.6' },
+  GS: { mode: 'perGram', buy: 'abc', sell: 2 },
+  MS: { mode: 'nonsense', sell: -1 },
+});
+check('字符串费率被收进数字、显式 0 保留', customFees.ZS.buy === 0 && near(customFees.ZS.sell, 0.6));
+check('切换成元/克后非法买入退回 0', customFees.GS.mode === 'perGram' && customFees.GS.buy === 0 && near(customFees.GS.sell, 2));
+check('脏模式/负值退回默认', customFees.MS.mode === 'perGram' && near(customFees.MS.sell, 3.8), JSON.stringify(customFees.MS));
+check(
+  '单笔费用三种口径',
+  near(calcFeeAmount({ mode: 'pct', buy: 0.2, sell: 0 }, 'buy', 10, 800), 16) &&
+    near(calcFeeAmount({ mode: 'perGram', buy: 0, sell: 3.8 }, 'sell', 10, 800), 38) &&
+    near(calcFeeAmount({ mode: 'perOrder', buy: 0, sell: 5 }, 'sell', 1, 800), 5) &&
+    calcFeeAmount(undefined, 'buy', 10, 800) === 0,
+);
+
+const zsFeeLedger = calcLedger(
+  [record('f1', 'buy', '2026-10-01', 10, 800, 1), record('f2', 'sell', '2026-10-02', 5, 950, 2)],
+  fees,
+);
+check('卖出 0.4% 从已实现盈亏里扣掉', near(zsFeeLedger.realized, 731), String(zsFeeLedger.realized));
+check('买入免手续费时成本不变', near(zsFeeLedger.cost, 4000) && near(zsFeeLedger.avgCost ?? 0, 800));
+const gsFeeLedger = calcLedger(
+  [record('g1', 'buy', '2026-10-01', 10, 800, 1, 'GS'), record('g2', 'sell', '2026-10-02', 5, 950, 2, 'GS')],
+  fees,
+);
+check('买入 0.2% 计入成本与均价', near(gsFeeLedger.cost, 4008) && near(gsFeeLedger.avgCost ?? 0, 801.6));
+check('买卖双边百分比都扣', near(gsFeeLedger.realized, 718.25), String(gsFeeLedger.realized));
+const msFeeLedger = calcLedger(
+  [record('m1', 'buy', '2026-10-01', 10, 800, 1, 'MS'), record('m2', 'sell', '2026-10-02', 5, 950, 2, 'MS')],
+  fees,
+);
+check('元/克点差按卖出克数扣', near(msFeeLedger.realized, 731), String(msFeeLedger.realized));
+const selectionFee = calcSelection([record('s1', 'buy', '2026-10-01', 10, 800, 1, 'GS')], ['s1'], fees);
+check('选中均价也含买入手续费', near(selectionFee.cost, 8016) && near(selectionFee.avgPrice ?? 0, 801.6));
+const estimateFee = calcEstimate(gsFeeLedger, 950, fees.GS);
+check('模拟市值扣卖出费', estimateFee !== null && near(estimateFee.value, 4726.25), String(estimateFee?.value));
+check('模拟盈亏相应减少', estimateFee !== null && near(estimateFee.pnl, 718.25), String(estimateFee?.pnl));
+const oversoldFee = calcLedger(
+  [record('of1', 'buy', '2026-10-01', 5, 800, 1, 'MS'), record('of2', 'sell', '2026-10-02', 8, 900, 2, 'MS')],
+  fees,
+);
+check('超卖只按实际可卖克数收点差', near(oversoldFee.realized, 481), String(oversoldFee.realized));
+const feeSummary = portfolioSummary(
+  [record('p1', 'buy', '2026-10-01', 10, 800, 1, 'GS')],
+  { GS: 950 },
+  fees,
+);
+check(
+  '组合持仓成本与市值都含手续费',
+  feeSummary !== null && near(feeSummary.cost, 8016) && near(feeSummary.value, 9452.5) && near(feeSummary.pnl, 1436.5),
+  JSON.stringify(feeSummary),
+);
+const feeDaily = dailyPortfolio(
+  [record('d1', 'buy', '2026-11-06', 10, 800, 1, 'ZS')],
+  'ZS',
+  '2026-11-06',
+  950,
+  800,
+  fees,
+);
+check(
+  '日报估值与当日收益扣卖出费',
+  feeDaily !== null && near(feeDaily.closeValue, 9462) && near(feeDaily.floating, 1462) && near(feeDaily.dayPnl ?? 0, 1462),
+  JSON.stringify(feeDaily),
+);
 
 console.log(failures ? `\n${failures} 项未通过` : '\n全部通过');
 process.exitCode = failures ? 1 : 0;

@@ -105,6 +105,7 @@ const els = {
   calcRows: document.getElementById('calc-rows'),
   calcSymbolInput: document.getElementById('calc-symbol-input'),
   calcPositions: document.getElementById('calc-positions'),
+  calcFeeRows: document.getElementById('calc-fee-rows'),
   calcInvalid: document.getElementById('calc-invalid'),
 };
 
@@ -832,8 +833,24 @@ function renderCalcRows() {
         <span class="calc-side-tag ${row.side}">${row.side === 'buy' ? '买入' : '卖出'}</span>
         <span class="calc-bank">${escAttr(row.symbolText)}</span>
         <span>${escAttr(row.date)}</span>
-        <span class="calc-mid"><span>克数 ${escAttr(row.gramsText)}</span><span>单价 ${escAttr(row.priceText)}</span></span>
-        <span class="calc-amount"><span>${row.side === 'buy' ? '成本' : '金额'}</span><b>${escAttr(row.amountText)}</b></span>
+        <span class="calc-mid"><span>克数 ${escAttr(row.gramsText)}</span><span>单价 ${escAttr(row.priceText)}</span>${row.feeText ? `<span>${escAttr(row.feeText)}</span>` : ''}</span>
+        <span class="calc-amount"><span>${row.side === 'buy' ? '成本' : '回款'}</span><b>${escAttr(row.amountText)}</b></span>
+      </div>`,
+    )
+    .join('');
+}
+
+function renderCalcFees(base) {
+  const modes = base.feeModes ?? [];
+  els.calcFeeRows.innerHTML = (base.fees ?? [])
+    .map(
+      (fee) => `<div class="calc-fee-row" data-symbol="${escAttr(fee.symbol)}">
+        <span>${escAttr(fee.label)}</span>
+        <select class="mode">${modes
+          .map((item) => `<option value="${escAttr(item.mode)}"${item.mode === fee.mode ? ' selected' : ''}>${escAttr(item.text)}</option>`)
+          .join('')}</select>
+        <input class="buy" type="number" min="0" step="0.01" value="${fee.buy}" aria-label="买入手续费" />
+        <input class="sell" type="number" min="0" step="0.01" value="${fee.sell}" aria-label="卖出手续费" />
       </div>`,
     )
     .join('');
@@ -842,6 +859,7 @@ function renderCalcRows() {
 function applyCalcBase(base) {
   calcState.rows = base.rows;
   calcState.symbols = base.symbols;
+  renderCalcFees(base);
   if (!calcState.symbol || !base.symbols.some((item) => item.symbol === calcState.symbol)) {
     calcState.symbol = base.symbols.some((item) => item.symbol === base.defaultSymbol)
       ? base.defaultSymbol
@@ -954,6 +972,32 @@ els.calcSymbolInput.addEventListener('change', () => {
   window.gold.setCalcSymbol(calcState.symbol);
   refreshCalcStats();
 });
+
+async function saveCalcFees() {
+  const fees = {};
+  for (const row of els.calcFeeRows.querySelectorAll('.calc-fee-row')) {
+    fees[row.dataset.symbol] = {
+      mode: row.querySelector('.mode').value,
+      buy: Number(row.querySelector('.buy').value) || 0,
+      sell: Number(row.querySelector('.sell').value) || 0,
+    };
+  }
+  const result = await window.gold.calcSaveFees({
+    fees,
+    symbol: calcState.symbol,
+    ids: calcSelectedIds(),
+  });
+  if (!result?.ok) {
+    showCalcError(result?.error ?? '手续费保存失败');
+    return;
+  }
+  showCalcError('');
+  applyCalcBase(result.base);
+  applyCalcStats(result.stats);
+}
+
+// change 在输入框失焦后触发，正好一次性保存整张费率表并重算
+els.calcFeeRows.addEventListener('change', () => void saveCalcFees());
 
 els.calcAdd.addEventListener('click', async () => {
   showCalcError('');
