@@ -75,10 +75,10 @@ export const RULE_KIND_UNIT: Record<RuleKind, string> = {
   pnlAmountBelow: '元',
 };
 
-/** 冷却按方向给：到价可以早点再来一次，涨跌幅与盈亏波动本来就该隔久一点 */
+/** 冷却按方向给：到价每次重新穿越都要提醒，不设冷却；涨跌幅与盈亏波动本来就该隔久一点 */
 export const RULE_COOLDOWN_MINUTES: Record<RuleKind, number> = {
-  above: 120,
-  below: 120,
+  above: 0,
+  below: 0,
   swing: 60,
   pnlPctAbove: 180,
   pnlPctBelow: 180,
@@ -184,13 +184,16 @@ function priceOf(quote: Quote): number {
 
 function matchRule(rule: AlertRule, quote: Quote, store: QuoteStore, now: number): string | null {
   const price = priceOf(quote);
-  const stamp = `现价 ${formatPrice(price)} · 卖出价 ${formatPrice(quote.sellPrice)} · 点差 ${formatPrice(quote.spread)}`;
+  // 伦敦金按美元/盎司报价，提醒里要带单位，避免和元/克混在一起
+  const unit = quote.currency === 'USD' ? ' 美元/盎司' : '';
+  const unitNote = quote.currency === 'USD' ? '（美元/盎司）' : '';
+  const stamp = `现价 ${formatPrice(price)} · 卖出价 ${formatPrice(quote.sellPrice)} · 点差 ${formatPrice(quote.spread)}${unitNote}`;
 
   if (rule.above !== undefined && price >= rule.above) {
-    return `${quote.name} 涨到 ${formatPrice(price)}|阈值 ${formatPrice(rule.above)} · ${stamp}`;
+    return `${quote.name} 涨到 ${formatPrice(price)}${unit}|阈值 ${formatPrice(rule.above)}${unit} · ${stamp}`;
   }
   if (rule.below !== undefined && price <= rule.below) {
-    return `${quote.name} 跌到 ${formatPrice(price)}|阈值 ${formatPrice(rule.below)} · ${stamp}`;
+    return `${quote.name} 跌到 ${formatPrice(price)}${unit}|阈值 ${formatPrice(rule.below)}${unit} · ${stamp}`;
   }
   if (rule.absDayChangePct !== undefined) {
     // 数据源自带的相对昨收涨跌幅优先，它按银行口径算，比本地当日首笔更准
@@ -202,7 +205,7 @@ function matchRule(rule: AlertRule, quote: Quote, store: QuoteStore, now: number
     if (pct !== null && Math.abs(pct) >= rule.absDayChangePct) {
       return (
         `${quote.name} 当日${pct >= 0 ? '涨' : '跌'} ${Math.abs(pct).toFixed(2)}%` +
-        `|现价 ${formatPrice(price)} · 触发线 ±${rule.absDayChangePct}%`
+        `|现价 ${formatPrice(price)}${unit} · 触发线 ±${rule.absDayChangePct}%`
       );
     }
   }
@@ -222,8 +225,11 @@ function fireOnEdge(
     return null;
   }
   let fired: FiredAlert | null = null;
+  // 到价不设冷却：价格回到阈值另一侧后再次穿越就是新的一次机会，不能因为上次提醒过就吞掉。
+  // 已保存的规则里可能是旧版 120 分钟冷却，这里按方向覆盖，不依赖文件里的值。
+  const cooldownMinutes = rule.above !== undefined || rule.below !== undefined ? 0 : rule.cooldownMinutes;
   // previous === undefined 是首次求值，静默记下状态；已经为 true 说明本轮仍在同一次穿越里
-  if (previous === false && store.canFire(rule.id, now, rule.cooldownMinutes)) {
+  if (previous === false && store.canFire(rule.id, now, cooldownMinutes)) {
     const [title, body] = hit.split('|');
     fired = { ruleId: rule.id, symbol: rule.symbol, title, body };
     store.markFired(rule.id, now);

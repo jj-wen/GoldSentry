@@ -85,7 +85,18 @@ const els = {
   dispArrow: document.getElementById('disp-arrow'),
   trendOn: document.getElementById('trend-on'),
   trendRangeSelect: document.getElementById('trend-range-select'),
+  london: document.getElementById('london'),
+  londonPrice: document.getElementById('london-price'),
+  londonPct: document.getElementById('london-pct'),
+  londonCny: document.getElementById('london-cny'),
+  londonAge: document.getElementById('london-age'),
+  londonUsdOz: document.getElementById('london-usd-oz'),
+  londonCnyGram: document.getElementById('london-cny-gram'),
+  londonConvertFormula: document.getElementById('london-convert-formula'),
+  londonConvertInfo: document.getElementById('london-convert-info'),
   notifyTest: document.getElementById('notify-test'),
+  openDashboard: document.getElementById('open-dashboard'),
+  dashboardResult: document.getElementById('dashboard-result'),
   quit: document.getElementById('quit'),
   quoteTip: document.getElementById('quote-tip'),
   calcGrams: document.getElementById('calc-grams'),
@@ -110,8 +121,10 @@ const els = {
 };
 
 const TONE_CLASS = { up: 'up', down: 'down', flat: '' };
-/** 与 core 的 PORTFOLIO_SYMBOL 保持一致：组合盈亏规则不绑具体银行 */
+/** 与 core 的 PORTFOLIO_SYMBOL / LONDON_GOLD_SYMBOL 保持一致 */
 const PORTFOLIO_SYMBOL = 'PORTFOLIO';
+const LONDON_SYMBOL = 'XAU';
+const LONDON_UNIT = '美元/盎司';
 
 /** 标题属性来自银行接口与 core 常量，拼进 HTML 前一律转义 */
 function escAttr(text) {
@@ -173,6 +186,74 @@ function scheduleQuoteTip(row, quote, cell, detail) {
     els.quoteTip.innerHTML = quoteTipHtml(quote, cell, detail);
     placeQuoteTip(row);
   }, 120);
+}
+
+/** 换算框一旦被手动编辑就不再跟着行情自动回填，避免轮询冲掉用户输入 */
+let londonConvertTouched = false;
+let londonConvertTimer = 0;
+
+function initLondonConverter(reference) {
+  if (!reference || londonConvertTouched) return;
+  const editing = document.activeElement === els.londonUsdOz || document.activeElement === els.londonCnyGram;
+  if (editing) return;
+  els.londonUsdOz.value = reference.priceInput;
+  els.londonCnyGram.value = reference.cnyInput;
+  els.londonConvertInfo.textContent = reference.fxText;
+  // 溢价要看主显银行，顺手问一次主进程；用户开始输入后不再覆盖
+  window.gold
+    .londonConvert({ value: reference.price, field: 'usdOz' })
+    .then((result) => {
+      if (!result?.ok || londonConvertTouched) return;
+      els.londonConvertFormula.textContent = result.formula ?? '';
+      els.londonConvertInfo.textContent = result.info ?? reference.fxText;
+    })
+    .catch(() => {});
+}
+
+/** 任意一边输入，另一边由 core 按实时在岸汇率换算；结果回来前又改过就丢弃 */
+function requestLondonConvert(field) {
+  const input = field === 'usdOz' ? els.londonUsdOz : els.londonCnyGram;
+  const other = field === 'usdOz' ? els.londonCnyGram : els.londonUsdOz;
+  clearTimeout(londonConvertTimer);
+  londonConvertTimer = setTimeout(async () => {
+    const raw = input.value.trim();
+    if (!raw) {
+      other.value = '';
+      els.londonConvertFormula.textContent = '';
+      els.londonConvertInfo.textContent = '';
+      return;
+    }
+    const result = await window.gold.londonConvert({ value: Number(raw), field });
+    if (input.value.trim() !== raw) return;
+    if (!result?.ok) {
+      els.londonConvertFormula.textContent = '';
+      els.londonConvertInfo.textContent = result?.error ?? '换算失败';
+      return;
+    }
+    other.value = field === 'usdOz' ? result.cnyGramText : result.usdOzText;
+    els.londonConvertFormula.textContent = result.formula ?? '';
+    els.londonConvertInfo.textContent = result.info ?? '';
+  }, 250);
+}
+
+els.londonUsdOz.addEventListener('input', () => {
+  londonConvertTouched = true;
+  requestLondonConvert('usdOz');
+});
+els.londonCnyGram.addEventListener('input', () => {
+  londonConvertTouched = true;
+  requestLondonConvert('cnyGram');
+});
+
+function renderLondon(reference) {
+  els.london.hidden = !reference;
+  if (!reference) return;
+  els.londonPrice.textContent = reference.priceText;
+  els.londonPct.textContent = reference.pctText;
+  els.londonPct.className = `london-pct ${TONE_CLASS[reference.tone] ?? ''}`.trim();
+  els.londonCny.textContent = [reference.cnyText, reference.fxText].filter(Boolean).join(' · ');
+  els.londonAge.textContent = reference.updateText;
+  initLondonConverter(reference);
 }
 
 function renderQuotes(next) {
@@ -357,10 +438,18 @@ els.trendSvg.addEventListener('pointerleave', hideTrendTip);
 
 function symbolOptions(extra) {
   const list = (state?.quotes ?? []).map((q) => ({ value: q.symbol, text: q.label }));
+  // 伦敦金是独立参考行情，不在银行报价表里，单独给一个提醒品种
+  list.push({ value: LONDON_SYMBOL, text: `伦敦金（${LONDON_UNIT}）` });
   list.push({ value: PORTFOLIO_SYMBOL, text: '组合持仓（总盈亏）' });
   // 规则里可能有已经下线的品种，留着选项才不会把这条悄悄改掉
-  if (extra && extra !== PORTFOLIO_SYMBOL && !list.some((o) => o.value === extra)) list.push({ value: extra, text: extra });
+  if (extra && !list.some((o) => o.value === extra)) list.push({ value: extra, text: extra });
   return list;
+}
+
+/** 伦敦金阈值按美元/盎司；涨跌幅仍是百分比 */
+function unitFor(kind, symbol) {
+  const label = (state?.ruleKinds ?? []).find((k) => k.kind === kind)?.unit ?? '元/克';
+  return symbol === LONDON_SYMBOL && label !== '%' ? LONDON_UNIT : label;
 }
 
 function optionTags(items, selected) {
@@ -374,14 +463,13 @@ function renderRuleRow(row, pending = false) {
   const kinds = state?.ruleKinds ?? [];
   const kind = row.kind ?? 'below';
   const portfolio = kinds.find((k) => k.kind === kind)?.portfolio === true;
-  const unitOf = (value) => kinds.find((k) => k.kind === value)?.unit ?? '元/克';
   const el = document.createElement('div');
   el.className = pending ? 'rule-row pending' : 'rule-row';
   const selectedSymbol = portfolio ? PORTFOLIO_SYMBOL : (pending ? '' : row.symbol);
   el.innerHTML = `${pending ? '' : `<input type="checkbox" class="on" ${row.enabled ? 'checked' : ''} />`}
     <select class="sym"${portfolio ? ' disabled' : ''}>${pending && !portfolio ? '<option value="" selected>选择品种…</option>' : ''}${optionTags(symbolOptions(selectedSymbol), selectedSymbol)}</select>
     <select class="kind">${optionTags(kinds.map((k) => ({ value: k.kind, text: k.text })), kind)}</select>
-    <input type="number" class="val" step="0.01" value="${pending ? '' : (row.value ?? '')}" placeholder="${escAttr(unitOf(kind))}" />
+    <input type="number" class="val" step="0.01" value="${pending ? '' : (row.value ?? '')}" placeholder="${escAttr(unitFor(kind, selectedSymbol))}" />
     ${pending ? '' : '<button class="del" type="button" title="删除这条提醒">×</button>'}`;
   el.querySelector('.kind').addEventListener('change', (event) => {
     const nextKind = event.currentTarget.value;
@@ -390,11 +478,13 @@ function renderRuleRow(row, pending = false) {
     sym.disabled = nextPortfolio;
     if (nextPortfolio) sym.value = PORTFOLIO_SYMBOL;
     else if (sym.value === PORTFOLIO_SYMBOL) sym.value = state?.quotes?.[0]?.symbol ?? '';
-    event.currentTarget.closest('.rule-row').querySelector('.val').placeholder = unitOf(nextKind);
+    event.currentTarget.closest('.rule-row').querySelector('.val').placeholder = unitFor(nextKind, sym.value);
   });
   // 选了"组合持仓"就自动切到组合盈亏规则，避免用价格方向保存出一条永远不触发的规则
   el.querySelector('.sym').addEventListener('change', (event) => {
-    if (event.currentTarget.value !== PORTFOLIO_SYMBOL) return;
+    const sym = event.currentTarget;
+    el.querySelector('.val').placeholder = unitFor(el.querySelector('.kind').value, sym.value);
+    if (sym.value !== PORTFOLIO_SYMBOL) return;
     const kindSel = el.querySelector('.kind');
     kindSel.value = 'pnlPctAbove';
     kindSel.dispatchEvent(new Event('change', { bubbles: true }));
@@ -574,6 +664,7 @@ function applyState(next) {
   // 拖拽进行中不能重建表格，否则正在拖的那一行会被换掉
   if (!hold?.dragging) renderQuotes(next);
   const primary = (next.quotes ?? []).find((q) => q.symbol === next.primarySymbol);
+  renderLondon(next.reference ?? null);
   renderTrend(next.trend ?? null, primary?.label ?? '');
   renderRules(next);
   fillBark(next.bark);
@@ -1153,6 +1244,16 @@ els.body.addEventListener('pointerup', commitDrag);
 els.body.addEventListener('pointercancel', endHold);
 
 els.notifyTest.addEventListener('click', () => window.gold.notifyTest());
+els.openDashboard.addEventListener('click', async () => {
+  try {
+    const result = await window.gold.openDashboard();
+    els.dashboardResult.textContent = result?.ok
+      ? '已生成并在浏览器打开速览页'
+      : `打开失败：${result?.error || '未知错误'}`;
+  } catch (error) {
+    els.dashboardResult.textContent = `打开失败：${error?.message || error}`;
+  }
+});
 els.quit.addEventListener('click', () => window.gold.quit());
 
 window.addEventListener('scroll', hideQuoteTip, true);

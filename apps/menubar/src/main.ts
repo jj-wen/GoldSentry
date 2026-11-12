@@ -8,10 +8,11 @@ import {
   nativeImage,
   powerMonitor,
   screen,
+  shell,
 } from 'electron';
 import type { NativeImage } from 'electron';
 import { join } from 'node:path';
-import { appendFileSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
   applySymbolOrder,
@@ -39,13 +40,16 @@ import {
   clampIntoWorkArea,
   clampOpacity,
   compileRules,
+  convertLondonGold,
   DEFAULT_DISPLAY,
   DEFAULT_TREND_SETTINGS,
   defaultCalcFees,
   detectTaskbar,
   displayFromArrowMode,
+  evaluateLondonGoldRules,
   evaluatePortfolioRules,
   feeCell,
+  fetchLondonGold,
   formatGrams,
   formatPct,
   formatPrice,
@@ -53,6 +57,9 @@ import {
   isCalcDate,
   isPortfolioKind,
   JD_SYMBOLS,
+  LONDON_GOLD_SYMBOL,
+  londonGoldView,
+  londonPremium,
   normalizeBotType,
   normalizeCalcFees,
   normalizeCalcRecords,
@@ -105,6 +112,8 @@ import {
   type DisplayToggles,
   type FiredAlert,
   type HealthReport,
+  type LondonGold,
+  type LondonGoldView,
   type MailConfig,
   type PriceTone,
   type Quote,
@@ -119,6 +128,7 @@ import {
   type TrendSparkline,
 } from '@goldsentry/core';
 import { watchTaskbarCoverage } from './fullscreen.ts';
+import { renderDashboardHtml } from './dashboard.ts';
 import { renderStatusStrip } from './status-renderer.ts';
 import type { StatusStripInput } from './status-renderer.ts';
 
@@ -141,6 +151,7 @@ let storeFile = '';
 let settingsFile = '';
 let calcFile = '';
 let taskbarLogFile = '';
+let dashboardFile = '';
 let rules: AlertRule[] = [];
 let calcRecords: CalcRecord[] = [];
 let store: QuoteStore;
@@ -164,6 +175,8 @@ interface BankDetail {
 
 interface State {
   quotes: Quote[];
+  /** 伦敦金参考行情；取不到时为 null，不影响银行报价与提醒 */
+  reference: LondonGoldView | null;
   rules: AlertRule[];
   errors: string[];
   lastPollAt: number;
@@ -203,6 +216,7 @@ interface State {
 
 let state: State = {
   quotes: [],
+  reference: null,
   rules: [],
   errors: [],
   lastPollAt: 0,
@@ -241,6 +255,11 @@ let state: State = {
   bot: { enabled: false, type: 'feishu', url: '', secret: '', token: '', chatId: '' },
   botTypes: BOT_TYPE_ORDER.map((type) => ({ type, text: BOT_TYPE_TEXT[type] })),
 };
+
+/** 伦敦金单独取数，失败不拖累银行轮询；详情页只是参考展示 */
+let londonGold: LondonGold | null = null;
+let londonFetching = false;
+let londonErrorLogged = false;
 
 /** 下拉框选项与滑杆区间都来自 core，面板不自己写死 */
 function buildUiModels(): Pick<
@@ -906,6 +925,7 @@ function pushState(): void {
   state = {
     ...state,
     quotes,
+    reference: londonGold ? londonGoldView(londonGold) : null,
     ...buildCells(quotes),
     ...buildBankDetails(quotes),
     ...buildRuleModels(),
@@ -931,6 +951,47 @@ function pushState(): void {
   panel?.webContents.send('gold:update', state);
   pushBall();
   pushTaskbar();
+}
+
+/** 浏览器速览页：主进程每轮取数后重写，页面自身按固定间隔刷新，不额外起服务 */
+function writeDashboard(quotes: Quote[], updatedAt = Date.now()): void {
+  if (!dashboardFile) return;
+  try {
+    const html = renderDashboardHtml({
+      quotes,
+      primarySymbol: settings.primarySymbol,
+      errors: state.errors,
+      updatedAt,
+    });
+    // 页面可能正好在刷新，用临时文件 + 改名避免读到半截内容
+    const tmp = `${dashboardFile}.${process.pid}.tmp`;
+    writeFileSync(tmp, html);
+    renameSync(tmp, dashboardFile);
+  } catch (error) {
+    console.error('[dashboard] 写入速览页失败', error);
+  }
+}
+
+async function refreshLondonGold(): Promise<void> {
+  if (londonFetching) return;
+  londonFetching = true;
+  try {
+    londonGold = await fetchLondonGold();
+    pushState();
+    londonErrorLogged = false;
+    if (rules.some((rule) => rule.symbol === LONDON_GOLD_SYMBOL && rule.enabled)) {
+      const alerts = evaluateLondonGoldRules(rules, londonGold, store);
+      if (alerts.length) await dispatch(alerts);
+    }
+  } catch (error) {
+    // 参考行情失败不参与银行健康判定；只打第一次，避免每轮刷屏
+    if (!londonErrorLogged) {
+      console.warn('[london] 取数失败', error instanceof Error ? error.message : error);
+      londonErrorLogged = true;
+    }
+  } finally {
+    londonFetching = false;
+  }
 }
 
 let ball: BrowserWindow | null = null;
@@ -1459,6 +1520,7 @@ async function poll(): Promise<void> {
     effectiveSeconds = backoffSeconds(settings.pollSeconds, result.failureStreak);
     state = {
       quotes,
+      reference: londonGold ? londonGoldView(londonGold) : state.reference,
       ...buildCells(quotes),
       ...buildBankDetails(quotes),
       ...buildRuleModels(),
@@ -1488,6 +1550,8 @@ async function poll(): Promise<void> {
     updateTrayTitle();
     layoutTaskbar();
     pushState();
+    writeDashboard(quotes);
+    void refreshLondonGold();
     if (rules.some((rule) => rule.symbol === PORTFOLIO_SYMBOL && rule.enabled)) {
       const prices = Object.fromEntries(result.quotes.map((quote) => [quote.symbol, quote.sellPrice]));
       const summary = portfolioSummary(calcRecords, prices, settings.calcFees);
@@ -1654,6 +1718,7 @@ if (!app.requestSingleInstanceLock()) {
     settingsFile = join(app.getPath('userData'), 'settings.json');
     calcFile = join(app.getPath('userData'), 'calculator.json');
     taskbarLogFile = join(app.getPath('userData'), 'taskbar.log');
+    dashboardFile = join(app.getPath('userData'), 'gold.html');
     rules = loadRules();
     settings = loadSettings();
     calcRecords = loadCalcRecords(settings.calcSymbol || settings.primarySymbol);
@@ -1719,6 +1784,45 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 ipcMain.handle('gold:state', () => state);
+// 伦敦金换算：任意一边输入，另一边按当前在岸汇率给出；顺带标注主显银行相对折算价的溢价
+ipcMain.handle('gold:convert-london', (_event, payload: unknown) => {
+  if (!londonGold || londonGold.usdCny === undefined) {
+    return { ok: false, error: '伦敦金或汇率暂不可用' };
+  }
+  const { value, field } = (payload ?? {}) as { value?: unknown; field?: unknown };
+  const conversion = convertLondonGold(
+    Number(value),
+    field === 'cnyGram' ? 'cnyGram' : 'usdOz',
+    londonGold.usdCny,
+  );
+  if (!conversion) return { ok: false, error: '请输入大于 0 的数值' };
+  const primary = primaryQuote();
+  const premium =
+    primary && londonGold.cnyPerGram !== undefined
+      ? londonPremium(primary.buyPrice, londonGold.cnyPerGram)
+      : null;
+  const rate = `在岸汇率 ${londonGold.usdCny.toFixed(4)}`;
+  const info = premium
+    ? `${rate} · ${primary.name} 买入价较伦敦金折算 ${formatPct(premium.pct)}`
+    : rate;
+  return {
+    ok: true,
+    usdOzText: formatPrice(conversion.usdOz),
+    cnyGramText: formatPrice(conversion.cnyGram),
+    formula: conversion.formula,
+    info,
+  };
+});
+// 打开前先重写一次，避免刚改完主显/刚取到价时页面还是上一轮
+ipcMain.handle('gold:open-dashboard', async () => {
+  writeDashboard(state.quotes);
+  const error = await shell.openPath(dashboardFile);
+  if (error) {
+    console.error('[dashboard] 打开速览页失败', error);
+    return { ok: false, error };
+  }
+  return { ok: true, file: dashboardFile };
+});
 // 面板 .then(applyState)，返回 void 会让渲染层拿到 undefined 后抛异常
 ipcMain.handle('gold:refresh', async () => {
   await poll();

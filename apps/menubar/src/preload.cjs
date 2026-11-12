@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('gold', {
   setTrend: (patch) => ipcRenderer.invoke('gold:set-trend', patch),
   setOrder: (symbols) => ipcRenderer.invoke('gold:set-order', symbols),
   setLaunchAtLogin: (enabled) => ipcRenderer.invoke('gold:set-launch-at-login', enabled),
+  openDashboard: () => ipcRenderer.invoke('gold:open-dashboard'),
+  londonConvert: (args) => ipcRenderer.invoke('gold:convert-london', args),
   calcLoad: (args) => ipcRenderer.invoke('calc:load', args),
   calcAdd: (args) => ipcRenderer.invoke('calc:add', args),
   calcRemove: (args) => ipcRenderer.invoke('calc:remove', args),

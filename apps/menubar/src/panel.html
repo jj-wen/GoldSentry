@@ -36,6 +36,23 @@
         </div>
         <div class="trend-axis" id="trend-axis" hidden><span>00:00</span><span>12:00</span><span>24:00</span></div>
       </section>
+      <section id="london" class="london" hidden>
+        <div class="london-main">
+          <span class="london-name">伦敦金</span>
+          <span class="london-unit">美元/盎司</span>
+          <b id="london-price" class="london-price">—</b>
+          <span id="london-pct" class="london-pct">—</span>
+          <span id="london-age" class="london-age">—</span>
+        </div>
+        <div id="london-cny" class="london-cny"></div>
+        <div class="london-convert">
+          <label>美元/盎司<input id="london-usd-oz" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" /></label>
+          <span class="london-swap">⇄</span>
+          <label>元/克<input id="london-cny-gram" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" /></label>
+        </div>
+        <div id="london-convert-formula" class="london-convert-formula"></div>
+        <div id="london-convert-info" class="london-convert-info"></div>
+      </section>
       <table id="quotes">
         <thead>
           <tr><th>品种</th><th>买入</th><th>卖出</th><th>点差</th><th>涨跌</th><th>更新</th></tr>
@@ -43,7 +60,7 @@
         <tbody></tbody>
       </table>
       <div id="quote-tip" class="quote-tip" hidden></div>
-      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序；鼠标悬停任意一行可看该银行的全名、费用口径、报价时间与交易时段。交易日一般 09:00 开市，工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00；周末与法定节假日休市，节前最后一个交易日晚上停夜盘。点差列优先显示买入卖一的点差，点差为 0 时显示服务费。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。</p>
+      <p class="hint">点任意一行可切换主显品种；长按一行可拖动排序；鼠标悬停任意一行可看该银行的全名、费用口径、报价时间与交易时段。交易日一般 09:00 开市，工商 22:30 收盘，浙商次日 02:30，民生/广发/兴业/中信次日 02:00；周末与法定节假日休市，节前最后一个交易日晚上停夜盘。点差列优先显示买入卖一的点差，点差为 0 时显示服务费。涨跌幅口径以各自银行 App 为准，不同银行“昨收”定义不同，不要横向比较。点差列带 ⚠ 表示退回的服务费核实已超过 90 天，请以银行 App 为准。伦敦金为国际现货参考价，按在岸汇率折算元/克，不参与银行到价提醒；需要盯伦敦金时在下面提醒里单独选「伦敦金（美元/盎司）」，阈值按美元/盎司填。</p>
     </main>
 
     <main id="view-calc" hidden>
@@ -179,7 +196,7 @@
           <button id="save" type="button">保存</button>
         </div>
         <div id="rule-rows"></div>
-        <p class="hint">最后一行是新增：选品种、填阈值就加一条，不用点新增按钮。提醒只在价格穿越阈值的那一刻触发一次，停在同一侧不会重复弹；同一品种同一方向只保留第一条，阈值留空的行不会被保存。</p>
+        <p class="hint">最后一行是新增：选品种、填阈值就加一条，不用点新增按钮。提醒只在价格穿越阈值的那一刻触发一次，停在同一侧不会重复弹；同一品种同一方向只保留第一条，阈值留空的行不会被保存。伦敦金的阈值按美元/盎司填，其它品种按元/克。</p>
       </section>
 
       <section class="rules">
@@ -290,10 +307,12 @@
       </section>
 
       <div class="foot-row">
+        <button id="open-dashboard" type="button">浏览器速览</button>
         <button id="notify-test" type="button">测试系统通知</button>
         <button id="quit" class="danger" type="button">退出 GoldSentry</button>
       </div>
-      <p class="hint">左键=详情，右键=设置。原托盘右键菜单已并入本页。</p>
+      <p class="hint" id="dashboard-result"></p>
+      <p class="hint">浏览器速览是只读页面（含主显与全部银行），生成在本地并每 30 秒自动刷新；加提醒、改设置仍在本面板。左键=详情，右键=设置。原托盘右键菜单已并入本页。</p>
     </main>
 
     <script src="panel.js"></script>

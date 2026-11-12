@@ -26,6 +26,57 @@ td.up { color: #ef5350; }
 
 td.down { color: #26a269; }
 
+/* 伦敦金参考价：独立于银行表格，不参与排序 */
+.london {
+  padding: 8px 12px 9px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(226, 180, 92, 0.06);
+}
+
+.london-main { display: flex; align-items: baseline; gap: 6px; }
+
+.london-name { font-weight: 600; }
+
+.london-unit { color: var(--muted); font-size: 11px; }
+
+.london-price { font-size: 15px; font-variant-numeric: tabular-nums; }
+
+.london-pct { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.london-pct.up { color: #ef5350; }
+
+.london-pct.down { color: #26a269; }
+
+.london-age { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+.london-cny { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+.london-convert { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+
+.london-convert label { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
+
+.london-convert input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.london-convert input:focus { outline: none; border-color: var(--accent); }
+
+.london-swap { color: var(--muted); font-size: 11px; }
+
+.london-convert-formula { color: var(--muted); font-size: 11px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+.london-convert-info { color: var(--muted); font-size: 11px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
 td.spread { color: var(--muted); font-size: 11px; }
 
 /* 费率核实过期：比 td.spread 更高的特异性才压得住灰色 */

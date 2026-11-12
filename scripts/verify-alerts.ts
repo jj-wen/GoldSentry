@@ -3,8 +3,11 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import {
   compileRules,
+  evaluateLondonGoldRules,
   evaluatePortfolioRules,
   evaluateRules,
+  LONDON_GOLD_SYMBOL,
+  parseLondonGold,
   PORTFOLIO_SYMBOL,
   portfolioSummary,
   QuoteStore,
@@ -122,8 +125,8 @@ const crossed = evaluateRules(rule, quote('ZS', 881), store, NOW + 3000);
 check('由假变真才弹一次', crossed.length === 1 && crossed[0].symbol === 'ZS', crossed.map((a) => a.title).join(' / '));
 check('提醒文案带阈值与现价', crossed[0]?.body.includes('阈值 900.00') && crossed[0]?.body.includes('现价 881.00'), crossed[0]?.body ?? '');
 const again = evaluateRules(rule, quote('ZS', 950), store, NOW + 4000);
-const inCooldown = evaluateRules(rule, quote('ZS', 880), store, NOW + 5000);
-check('冷却期内再次穿越不重复弹', again.length === 0 && inCooldown.length === 0);
+const recrossed = evaluateRules(rule, quote('ZS', 880), store, NOW + 5000);
+check('到价回到另一侧后再次穿越要再弹', again.length === 0 && recrossed.length === 1, JSON.stringify(recrossed));
 const otherSymbol = evaluateRules([{ ...rule[0], symbol: 'GS' }], quote('ZS', 800), store, NOW + 6000);
 check('规则只匹配自己的品种', otherSymbol.length === 0);
 const disabled = evaluateRules([{ ...rule[0], enabled: false }], quote('ZS', 700), store, NOW + 7000);
@@ -167,6 +170,44 @@ check('浮亏达到阈值触发', lossFired.length === 1 && lossFired[0].title.i
 check('缺价时不拿不完整合计误报', evaluatePortfolioRules(pnlRules, partialPnl, pnlStore, NOW + 6000).length === 0);
 check('没有记录时组合规则不弹', evaluatePortfolioRules(pnlRules, null, pnlStore, NOW + 7000).length === 0);
 rmSync(pnlFile, { force: true });
+
+// --- 伦敦金：阈值按美元/盎司，上升沿与重新穿越和其它品种一致 ---
+const londonRaw =
+  'var hq_str_hf_XAU="3954.90,3987.69,3954.90,3955.25,4000.31,3954.84,16:20:00,3987.69,3990.89,0,0,0,2026-11-12,伦敦金";\n' +
+  'var hq_str_fx_susdcny="16:21:01,6.6689,6.6690,6.6749,51,6.6718,6.6718,6.6667,6.6689,在岸人民币";';
+const london = parseLondonGold(londonRaw, NOW);
+const londonAt = (price: number) => ({ ...london, price, bid: price, ask: price + 0.35 });
+const londonFile = join(tmpdir(), `gs-london-${Date.now()}.json`);
+const londonStore = new QuoteStore(londonFile);
+const londonRules: AlertRule[] = [
+  { id: 'XAU-below', symbol: LONDON_GOLD_SYMBOL, enabled: true, below: 3970, cooldownMinutes: 0 },
+];
+
+const londonCompiled = compileRules([{ symbol: 'XAU', kind: 'below', value: 3970, enabled: true }]);
+check(
+  '伦敦金规则编译后仍用 XAU 品种',
+  londonCompiled[0]?.symbol === LONDON_GOLD_SYMBOL && londonCompiled[0]?.id === 'XAU-below' && londonCompiled[0]?.below === 3970,
+  JSON.stringify(londonCompiled[0]),
+);
+check('伦敦金首轮静默预热', evaluateLondonGoldRules(londonRules, londonAt(3950), londonStore, NOW).length === 0);
+check('伦敦金回到阈值另一侧不弹', evaluateLondonGoldRules(londonRules, londonAt(3990), londonStore, NOW + 1000).length === 0);
+const londonFired = evaluateLondonGoldRules(londonRules, londonAt(3965), londonStore, NOW + 2000);
+check('伦敦金下穿触发', londonFired.length === 1 && londonFired[0].symbol === LONDON_GOLD_SYMBOL, JSON.stringify(londonFired));
+check(
+  '伦敦金提醒文案带美元/盎司',
+  !!londonFired[0]?.title.includes('美元/盎司') && !!londonFired[0]?.body.includes('美元/盎司'),
+  londonFired[0]?.title ?? '',
+);
+evaluateLondonGoldRules(londonRules, londonAt(3990), londonStore, NOW + 3000);
+check(
+  '伦敦金重新穿越再提醒一次',
+  evaluateLondonGoldRules(londonRules, londonAt(3968), londonStore, NOW + 4000).length === 1,
+);
+check(
+  '银行规则不会误匹配伦敦金',
+  evaluateLondonGoldRules([{ ...rule[0] }], london, londonStore, NOW + 5000).length === 0,
+);
+rmSync(londonFile, { force: true });
 
 rmSync(storeFile, { force: true });
 

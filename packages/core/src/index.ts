@@ -1,5 +1,19 @@
 export type { Quote, QuoteSource, PriceBasis } from './types.ts';
 export { jdSource, parseBatchPrice, JD_PRODUCT_SKUS, JD_SYMBOLS } from './sources/jd.ts';
+export {
+  convertLondonGold,
+  evaluateLondonGoldRules,
+  fetchLondonGold,
+  LONDON_GOLD_SYMBOL,
+  londonGoldView,
+  londonPremium,
+  parseLondonGold,
+  TROY_OUNCE_GRAMS,
+  type LondonConversion,
+  type LondonConvertField,
+  type LondonGold,
+  type LondonGoldView,
+} from './londonGold.ts';
 export { QuoteStore, beijingDateKey } from './store.ts';
 export { beijingDayStart, beijingHhmm, beijingMinutes } from './clock.ts';
 export { buildDailyDigest, type DailyDigest, type DigestOptions } from './digest.ts';

@@ -41,7 +41,12 @@ import {
   trendSparkline,
   updateAgeText,
   parseBatchPrice,
+  parseLondonGold,
+  londonGoldView,
+  convertLondonGold,
+  londonPremium,
 } from '../packages/core/src/index.ts';
+import { renderDashboardHtml } from '../apps/menubar/src/dashboard.ts';
 
 let failures = 0;
 function check(label: string, condition: boolean, extra = ''): void {
@@ -541,6 +546,100 @@ check(
   '回退日按当天最后一笔截窗口',
   trendPrevHour.isToday === false && trendPrevHour.windowEnd === TREND_NOW - 24 * 60 * 60_000 && trendPrevHour.points.length === 2,
   `${trendPrevHour.day} ${trendPrevHour.points.length}`,
+);
+
+// --- 浏览器速览页：只读单文件，金额与颜色必须和面板同一口径 ---
+const dashNow = Date.now();
+const dashQuote = (
+  symbol: string,
+  name: string,
+  buyPrice: number,
+  sellPrice: number,
+  dayChangePct: number | undefined,
+) => ({
+  sourceId: 'jd',
+  symbol,
+  name,
+  label: name,
+  currency: 'CNY' as const,
+  unit: 'GRAM' as const,
+  buyPrice,
+  sellPrice,
+  midPrice: (buyPrice + sellPrice) / 2,
+  spread: buyPrice - sellPrice,
+  basis: 'realtime' as const,
+  dayChangePct,
+  quotedAt: dashNow,
+  fetchedAt: dashNow,
+});
+const dashHtml = renderDashboardHtml({
+  quotes: [
+    dashQuote('ZS', '浙商积存金', 875.5, 873.2, -0.42),
+    dashQuote('GS', '工商积存金', 880.126, 877.8, 0.35),
+  ],
+  primarySymbol: 'ZS',
+  errors: ['<boom>'],
+  updatedAt: dashNow,
+});
+check('速览页金额两位小数', dashHtml.includes('>875.50<') && dashHtml.includes('>873.20<'));
+check('速览页涨跌颜色按真实方向', dashHtml.includes('hero-price down') && dashHtml.includes('class="num up"'));
+check('速览页主显行标出', dashHtml.includes('is-primary') && dashHtml.includes('>主显<'));
+check('速览页自动刷新', dashHtml.includes('http-equiv="refresh" content="30"'));
+check('速览页转义外部文本', dashHtml.includes('&lt;boom&gt;') && !dashHtml.includes('<boom>'));
+
+// --- 伦敦金：独立参考行情，字段与折算都按新浪外盘口径 ---
+const londonPayload =
+  'var hq_str_hf_XAU="3954.90,3987.690,3954.90,3955.25,4000.31,3954.84,16:20:00,3987.69,3990.89,0,0,0,2026-11-12,伦敦金（现货黄金）";\n' +
+  'var hq_str_fx_susdcny="16:21:01,6.6689000000,6.6690000000,6.6749000000,51.0000000000,6.6718000000,6.6718000000,6.6667000000,6.6689000000,在岸人民币,-0.0899,-0.0060,0.0051,此行情由新浪财经计算得出,0.0000,0.0000,,2026-11-12";';
+const london = parseLondonGold(londonPayload, 0);
+const londonView = londonGoldView(london, london.quotedAt);
+check('伦敦金现价与买一卖一', london.price === 3954.9 && london.bid === 3954.9 && london.ask === 3955.25);
+check('伦敦金按昨收算涨跌', londonView.pctText === '-0.82%' && londonView.tone === 'down', londonView.pctText);
+check('伦敦金时间按北京时间解析', london.quotedAt === Date.UTC(2026, 10, 12, 8, 20, 0), String(london.quotedAt));
+check('伦敦金按在岸汇率折算元/克', londonView.cnyText === '≈ 847.97 元/克' && londonView.fxText === '在岸汇率 6.6689', londonView.cnyText);
+check('伦敦金价格两位小数', londonView.priceText === '3954.90' && londonView.unitText === '美元/盎司');
+const noFx = parseLondonGold(londonPayload.split('\n')[0], 0);
+check('缺少汇率时只提示不硬算', noFx.cnyPerGram === undefined && londonGoldView(noFx).cnyText === '汇率未知，暂不折算');
+
+// --- 伦敦金换算：两边都能量，非法输入不编数 ---
+const usdToCnyCny = convertLondonGold(3954.9, 'usdOz', 6.6689);
+check(
+  '美元/盎司换算元/克',
+  !!usdToCnyCny && Math.abs(usdToCnyCny.cnyGram - 847.966) < 0.01,
+  usdToCnyCny ? usdToCnyCny.cnyGram.toFixed(3) : 'null',
+);
+const cnyToUsd = convertLondonGold(usdToCnyCny!.cnyGram, 'cnyGram', 6.6689);
+check(
+  '元/克反算回美元/盎司',
+  !!cnyToUsd && Math.abs(cnyToUsd.usdOz - 3954.9) < 0.001,
+  cnyToUsd ? cnyToUsd.usdOz.toFixed(3) : 'null',
+);
+check(
+  '换算输入非法或汇率缺失时返回 null',
+  convertLondonGold(0, 'usdOz', 6.6689) === null &&
+    convertLondonGold(-1, 'cnyGram', 6.6689) === null &&
+    convertLondonGold(Number.NaN, 'usdOz', 6.6689) === null &&
+    convertLondonGold(100, 'usdOz', Number.NaN) === null,
+);
+check(
+  '美元→元/克显示实际算式',
+  usdToCnyCny?.formula === '3954.90 美元/盎司 × 6.6689 ÷ 31.1034768 ≈ 847.97 元/克',
+  usdToCnyCny?.formula ?? 'null',
+);
+check(
+  '元/克→美元显示实际算式',
+  cnyToUsd?.formula === '847.97 元/克 × 31.1034768 ÷ 6.6689 ≈ 3954.90 美元/盎司',
+  cnyToUsd?.formula ?? 'null',
+);
+const premium = londonPremium(860, 847.97);
+check(
+  '银行溢价按折算价算金额与百分比',
+  !!premium && Math.abs(premium.amount - 12.03) < 0.001 && Math.abs(premium.pct - 1.4186) < 0.01,
+  premium ? `${premium.amount.toFixed(2)} / ${premium.pct.toFixed(2)}%` : 'null',
+);
+check(
+  '溢价输入缺失时不硬算',
+  londonPremium(860, Number.NaN) === null && londonPremium(0, 847.97) === null,
 );
 
 console.log(failures ? `\n${failures} 项未通过` : '\n全部通过');
